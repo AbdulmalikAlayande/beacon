@@ -1,3 +1,4 @@
+
 package io.github.abdulmalikalayande.beacon.api.enums;
 
 /**
@@ -7,16 +8,16 @@ package io.github.abdulmalikalayande.beacon.api.enums;
  * attempt, protecting sender reputation and maintaining regulatory compliance.
  */
 public enum SuppressionReason {
-
+    
     /** The provider reported a permanent (hard) bounce for this contact. */
     HARD_BOUNCE,
-
+    
     /** The recipient marked a previous message as spam. */
     SPAM_COMPLAINT,
-
+    
     /** The recipient explicitly unsubscribed. */
     USER_UNSUBSCRIBED,
-
+    
     /** An administrator manually suppressed this contact. */
     ADMIN_SUPPRESSED
 }
