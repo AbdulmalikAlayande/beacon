@@ -9,28 +9,28 @@ package io.github.abdulmalikalayande.beacon.api.enums;
  * with a {@code NotificationTypeRegistry} implementation.
  */
 public enum NotificationType {
-
+    
     /** One-time passwords. High priority, time-sensitive, bypasses quiet hours. */
     OTP,
-
+    
     /** Confirmation that a payment succeeded. High priority. */
     PAYMENT_RECEIPT,
-
+    
     /** Notice that a payment failed. High priority. */
     PAYMENT_FAILED,
-
+    
     /** Security-related alerts such as new device logins. High priority. */
     SECURITY_ALERT,
-
+    
     /** Promotional/marketing content. Low priority, respects quiet hours. */
     PROMO,
-
+    
     /** Engagement nudges and re-activation messages. Low priority. */
     ENGAGEMENT,
-
+    
     /** Operational/system notices. Priority determined by the host. */
     SYSTEM_ALERT,
-
+    
     /**
      * A host-defined type. When used, the host should supply a
      * {@code NotificationTypeRegistry} so Beacon can resolve the priority and
