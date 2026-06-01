@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(git config:*)",
-      "Bash(while read:*)",
-      "Bash(do git:*)"
-    ]
-  }
-}
