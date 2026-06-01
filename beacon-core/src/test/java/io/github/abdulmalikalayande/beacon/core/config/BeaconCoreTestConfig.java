@@ -8,10 +8,10 @@ import java.time.Instant;
 import java.time.ZoneId;
 
 @TestConfiguration
-public class BeanCoreTestConfig {
+public class BeaconCoreTestConfig {
 	
 	@Bean
 	public Clock testClock() {
-		return Clock.fixed(Instant.now(), ZoneId.of("Africa/Lagos"));
+		return Clock.fixed(Instant.parse("2026-05-31T03:00:00Z"), ZoneId.of("Africa/Lagos"));
 	}
 }
