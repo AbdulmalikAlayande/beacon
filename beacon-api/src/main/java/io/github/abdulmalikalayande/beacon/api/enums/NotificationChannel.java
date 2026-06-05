@@ -17,5 +17,10 @@ public enum NotificationChannel {
 	SMS,
 	
 	/** Email, delivered via providers like SendGrid or Mailgun. */
-	EMAIL
+	EMAIL,
+//
+//	/**
+//	 * Supports all channels, EMAIL, PUSH, SMS
+//	 */
+//	ALL
 }
