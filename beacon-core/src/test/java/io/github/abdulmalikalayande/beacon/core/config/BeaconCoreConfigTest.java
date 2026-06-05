@@ -120,7 +120,6 @@ class BeaconCoreConfigTest {
                 assertThat(context).getBean("testClock").isSameAs(clockBean);
                 assertThat(clockBean.getZone()).isEqualTo(ZoneId.of("Africa/Lagos"));
                 assertEquals(clockBean.instant(), Instant.parse("2026-05-31T03:00:00Z"));
-                assertEquals(clockBean.instant().getEpochSecond(), Instant.parse("2026-05-31T03:00:00Z").getEpochSecond());
             });
     }
 
