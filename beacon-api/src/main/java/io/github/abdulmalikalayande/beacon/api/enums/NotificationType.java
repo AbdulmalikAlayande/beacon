@@ -28,6 +28,11 @@ public enum NotificationType {
     /** Engagement nudges and re-activation messages. Low priority. */
     ENGAGEMENT,
     
+    /**
+     * Transactional messages related to order processing, such as shipping updates or delivery confirmations.
+     */
+    ORDER_CONFIRMATION,
+    
     /** Operational/system notices. Priority determined by the host. */
     SYSTEM_ALERT,
     
