@@ -440,14 +440,14 @@ public class DefaultTemplateEngineTest {
 		NotificationTemplate template = createTemplate(SMS, null, null, "${first}${middle}${last}");
 		NotificationPreference preference = createPreference("+2348012345678", null, null);
 		Map<String, String> context = Map.of(
-			"first",  "Abdul",
-			"middle", "malik",
+			"first",  "Abdulmalik",
+			"middle", "Ayanniyi",
 			"last",   "Alayande"
 		);
 
 		RenderedNotification result = templateEngine.render(template, preference, context);
 
-		assertEquals("AbdulmalikAlayande", result.body());
+		assertEquals("AbdulmalikAyanniyiAlayande", result.body());
 	}
 	
 	/**
