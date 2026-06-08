@@ -5,9 +5,12 @@ import io.github.abdulmalikalayande.beacon.api.enums.NotificationPriority;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationStatus;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationType;
 
+import io.github.abdulmalikalayande.beacon.core.event.NotificationRequestedEvent;
 import jakarta.persistence.*;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -16,6 +19,7 @@ import java.util.UUID;
 public class DeliveryTaskEntity {
 
 	@Id
+	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
 	@Column(name = "notification_id", nullable = false)
@@ -57,7 +61,37 @@ public class DeliveryTaskEntity {
 
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
-	
+
+	/**
+	 * Creates a new queued delivery task for the given channel.
+	 *
+	 * @param event             the accepted notification event
+	 * @param channel           the delivery channel for this task
+	 * @param clock             clock for timestamps
+	 * @param encryptedContext  the encrypted template context, or {@code null}
+	 */
+	public static DeliveryTaskEntity createQueued(
+			NotificationRequestedEvent event,
+			NotificationChannel channel,
+			Clock clock,
+			String encryptedContext
+	) {
+		Instant now = clock.instant();
+		DeliveryTaskEntity task = new DeliveryTaskEntity();
+		task.notificationId = event.notificationId();
+		task.idempotencyKey = event.idempotencyKey();
+		task.userId = event.userId();
+		task.type = event.type();
+		task.priority = event.priority();
+		task.channel = channel;
+		task.status = NotificationStatus.QUEUED;
+		task.retryCount = 0;
+		task.availableAt = now;
+		task.encryptedContext = encryptedContext;
+		task.createdAt = now;
+		task.updatedAt = now;
+		return task;
+	}
 
 	public UUID getId() {
 		return id;

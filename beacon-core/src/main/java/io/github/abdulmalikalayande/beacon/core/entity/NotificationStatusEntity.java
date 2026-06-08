@@ -6,6 +6,7 @@ import io.github.abdulmalikalayande.beacon.api.enums.NotificationType;
 import io.github.abdulmalikalayande.beacon.api.enums.ProviderName;
 import jakarta.persistence.*;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -21,6 +22,7 @@ import java.util.UUID;
 public class NotificationStatusEntity {
 
 	@Id
+	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
 	@Column(name = "notification_id", nullable = false)
@@ -59,7 +61,27 @@ public class NotificationStatusEntity {
 
 	@Column(name = "updated_at", nullable = false)
 	private Instant updatedAt;
-	
+
+	/**
+	 * Creates a new queued status record that mirrors a delivery task.
+	 * Provider and failure reason are left null — they are set when
+	 * delivery is actually attempted.
+	 */
+	public static NotificationStatusEntity fromTask(DeliveryTaskEntity task, Clock clock) {
+		Instant now = clock.instant();
+		NotificationStatusEntity record = new NotificationStatusEntity();
+		record.notificationId = task.getNotificationId();
+		record.idempotencyKey = task.getIdempotencyKey();
+		record.userId = task.getUserId();
+		record.channel = task.getChannel();
+		record.type = task.getType();
+		record.status = NotificationStatus.QUEUED;
+		record.retryCount = 0;
+		record.createdAt = now;
+		record.updatedAt = now;
+		return record;
+	}
+
 	public UUID getId() {
 		return id;
 	}
