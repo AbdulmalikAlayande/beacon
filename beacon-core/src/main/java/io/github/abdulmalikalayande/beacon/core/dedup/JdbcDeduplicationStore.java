@@ -4,13 +4,13 @@ import io.github.abdulmalikalayande.beacon.api.port.DeduplicationStore;
 
 public class JdbcDeduplicationStore implements DeduplicationStore {
 	
-	public JdbcDeduplicationStore() {
-	
+	@Override
+	public boolean isSeen(String idempotencyKey) {
+		return false;
 	}
 	
-	@Override
-	public boolean isDuplicate(String deduplicationKey) {
-		return false;
+	public JdbcDeduplicationStore() {
+	
 	}
 	
 	@Override
@@ -26,10 +26,5 @@ public class JdbcDeduplicationStore implements DeduplicationStore {
 	@Override
 	public void releaseDeliveryLock(String notificationId) {
 	
-	}
-	
-	@Override
-	public boolean isSeen(String idempotencyKey) {
-		return false;
 	}
 }

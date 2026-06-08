@@ -82,23 +82,23 @@ class DefaultDeduplicationStoreTest {
 	class DuplicateDetectionTests {
 
 		@Test
-		@DisplayName("isDuplicate returns false before an idempotency key has been marked")
-		void isDuplicate_returnsFalseBeforeKeyIsMarked() {
+		@DisplayName("isSeen returns false before an idempotency key has been marked")
+		void isSeen_returnsFalseBeforeKeyIsMarked() {
 			String keyNotYetMarked = "key-not-yet-marked-002";
 			
-			assertFalse(store.isDuplicate(keyNotYetMarked),
-				"Expected isDuplicate to return false for a key that has not been marked");
+			assertFalse(store.isSeen(keyNotYetMarked),
+				"Expected isSeen to return false for a key that has not been marked");
 		}
 
 		@Test
-		@DisplayName("isDuplicate returns true after an idempotency key has been marked")
-		void isDuplicate_returnsTrueAfterKeyIsMarked() {
+		@DisplayName("isSeen returns true after an idempotency key has been marked")
+		void isSeen_returnsTrueAfterKeyIsMarked() {
 			String keyToMark = "key-to-mark-002";
 			
 			store.markSeen(keyToMark);
 			
-			assertTrue(store.isDuplicate(keyToMark),
-				"Expected isDuplicate to return true after markSeen has been called with the key");
+			assertTrue(store.isSeen(keyToMark),
+				"Expected isSeen to return true after markSeen has been called with the key");
 		}
 	}
 
@@ -131,11 +131,11 @@ class DefaultDeduplicationStoreTest {
 		}
 
 		@Test
-		@DisplayName("isDuplicate rejects a blank idempotency key with a clear validation error")
-		void isDuplicate_rejectsBlankIdempotencyKey_withClearValidationError() {
+		@DisplayName("isSeen rejects a blank idempotency key with a clear validation error")
+		void isSeen_rejectsBlankIdempotencyKey_withClearValidationError() {
 			assertThrowsExactly(IllegalArgumentException.class,
-				() -> store.isDuplicate(""),
-				"Expected isDuplicate to reject blank key with IllegalArgumentException");
+				() -> store.isSeen(""),
+				"Expected isSeen to reject blank key with IllegalArgumentException");
 		}
 	}
 

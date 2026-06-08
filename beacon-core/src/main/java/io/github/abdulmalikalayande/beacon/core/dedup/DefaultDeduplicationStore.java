@@ -41,18 +41,6 @@ public class DefaultDeduplicationStore implements DeduplicationStore {
 		this.retentionWindow = retentionWindow;
 	}
 	
-	//FIXME: Personally I think this method should go, It should be removed, isSeen() seems to have a name that depicts
-	// what it does better. But I think we can keep it for now, and maybe deprecate it later if we want to remove it.
-	// Or maybe it will be useful if we implement it to do what it is named to do. but thinking about it, Can we ever
-	// have duplicates? we use putIfAbsent to prevent duplicates, so this method is not needed. That is what I think
-	// personally. So it should be removed from the main DeduplicationStore interface.
-	@Override
-	public boolean isDuplicate(String deduplicationKey) {
-		if (deduplicationKey == null || deduplicationKey.isBlank())
-			throw new IllegalArgumentException("deduplicationKey must not be null or blank");
-		return defaultDedupStore.containsKey(deduplicationKey);
-	}
-	
 	@Override
 	public void markSeen(String idempotencyKey) {
 		/*TODO: To implement the cleanup process, whenever a new entry is added to the map. Before adding a new entry,

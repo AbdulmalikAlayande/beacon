@@ -19,7 +19,7 @@ public interface DeduplicationStore {
      * @param idempotencyKey the host-supplied key
      * @return {@code true} if this key has already been seen
      */
-    boolean isDuplicate(String idempotencyKey);
+    boolean isSeen(String idempotencyKey);
 
     /**
      * Record a key as seen so future submissions are recognized as duplicates.
@@ -43,6 +43,4 @@ public interface DeduplicationStore {
      * @param notificationId the notification to unlock
      */
     void releaseDeliveryLock(String notificationId);
-    
-    boolean isSeen(String idempotencyKey);
 }

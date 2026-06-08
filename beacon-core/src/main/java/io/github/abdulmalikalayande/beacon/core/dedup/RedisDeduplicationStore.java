@@ -9,7 +9,7 @@ public class RedisDeduplicationStore implements DeduplicationStore {
 	}
 	
 	@Override
-	public boolean isDuplicate(String deduplicationKey) {
+	public boolean isSeen(String idempotencyKey) {
 		return false;
 	}
 	
@@ -26,10 +26,5 @@ public class RedisDeduplicationStore implements DeduplicationStore {
 	@Override
 	public void releaseDeliveryLock(String notificationId) {
 	
-	}
-	
-	@Override
-	public boolean isSeen(String idempotencyKey) {
-		return false;
 	}
 }
