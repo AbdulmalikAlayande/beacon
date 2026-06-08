@@ -4,6 +4,7 @@ import io.github.abdulmalikalayande.beacon.api.dto.NotificationStatusRecord;
 import io.github.abdulmalikalayande.beacon.api.request.BatchNotificationRequest;
 import io.github.abdulmalikalayande.beacon.api.request.NotificationRequest;
 import io.github.abdulmalikalayande.beacon.api.response.NotificationResponse;
+import jakarta.validation.constraints.NotNull;
 
 /**
  * The primary entry point hosts use to send notifications. This is the one
@@ -33,7 +34,7 @@ public interface NotificationService {
      * @throws jakarta.validation.ConstraintViolationException
      *         if the request fails validation
      */
-    NotificationResponse send(NotificationRequest request);
+    NotificationResponse send(@NotNull NotificationRequest request);
 
     /**
      * Accept a batch notification targeting many users.

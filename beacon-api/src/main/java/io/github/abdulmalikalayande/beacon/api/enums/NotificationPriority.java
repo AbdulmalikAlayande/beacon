@@ -14,6 +14,11 @@ public enum NotificationPriority {
     HIGH,
     
     /**
+     *
+     */
+    MEDIUM,
+    
+    /**
      * Non-urgent (promotions, engagement nudges). Respects quiet hours — if the
      * current time falls within the recipient's quiet window, delivery is
      * deferred until the window ends.
