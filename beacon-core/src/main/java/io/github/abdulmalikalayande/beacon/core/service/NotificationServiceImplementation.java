@@ -39,9 +39,12 @@ public class NotificationServiceImplementation implements NotificationService {
 	public NotificationResponse send(NotificationRequest request) {
 		Set<ConstraintViolation<NotificationRequest>> violations = validator.validate(request);
 		if (!violations.isEmpty()) throw new ConstraintViolationException(violations);
-
-		UUID notificationId = uuidFrom(request.idempotencyKey(), clock.instant().toString());
+		
 		deduplicationStore.markSeen(request.idempotencyKey());
+		
+		//TBD: Another out-loud thinking: Why are we doing this? why are we creating the notification id and
+		// setting it here? should it not be a database thingy? I mean a notification... feels kinda weird idk
+		UUID notificationId = uuidFrom(request.idempotencyKey());
 
 		eventPublisher.publishEvent(NotificationRequestedEvent.from(notificationId, request));
 		return new NotificationResponse(notificationId.toString(), request.idempotencyKey(), CREATED, clock.instant());
@@ -64,11 +67,10 @@ public class NotificationServiceImplementation implements NotificationService {
 	
 	
 	
-	public static UUID uuidFrom(String idempotencyKey, String instantText) {
+	public static UUID uuidFrom(String idempotencyKey) {
 		try {
-			String input = idempotencyKey + "|" + instantText;
 			MessageDigest md = MessageDigest.getInstance("SHA-256");
-			byte[] hash = md.digest(input.getBytes(StandardCharsets.UTF_8));
+			byte[] hash = md.digest(idempotencyKey.getBytes(StandardCharsets.UTF_8));
 			
 			long msb = 0;
 			long lsb = 0;
