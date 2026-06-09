@@ -14,6 +14,20 @@
     <packaging>pom</packaging>
     <name>beacon</name>
     <description>beacon</description>
+    <developers>
+        <developer>
+            <name>Abdulmalik Alayande</name>
+            <email>alaabdulmalik03@gmail.com</email>
+            <organization>Beacon</organization>
+            <organizationUrl>https://www.beacon.io</organizationUrl>
+        </developer>
+    </developers>
+    <scm>
+        <url>https://github.com/AbdulmalikAlayande/beacon</url>
+        <connection/>
+        <developerConnection/>
+        <tag/>
+    </scm>
     <properties>
         <java.version>21</java.version>
     </properties>
@@ -38,15 +52,6 @@
     <licenses>
         <license/>
     </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
     <dependencies>
 
     </dependencies>
