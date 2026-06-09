@@ -23,6 +23,7 @@ import java.util.Set;
 
 import static org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT;
 
+//todo: To implement tests for this class.
 public class NotificationRequestedEventListener {
 
 	private final Clock clock;
