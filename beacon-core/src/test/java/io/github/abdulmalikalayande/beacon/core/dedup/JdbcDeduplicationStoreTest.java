@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -113,13 +114,13 @@ class JdbcDeduplicationStoreTest {
 			assertNotNull(rowCount);
 			// to prove that the rejection is clean, i.e., there is no partial or double insert
 			assertEquals(1, rowCount);
-			doManualCleanup(jdbcTemplate);
+			doManualCleanup(newKey);
 		}
-		
-		private void doManualCleanup(JdbcTemplate jdbcTemplate) {
-			jdbcTemplate.update("DELETE FROM deduplication_store");
+
+		private void doManualCleanup(String key) {
+			jdbcTemplate.update("DELETE FROM deduplication_store WHERE idempotency_key = ?", key);
 			Integer rowCountAfterCleanup = jdbcTemplate.queryForObject(
-					"SELECT COUNT(*) FROM deduplication_store", Integer.class);
+					"SELECT COUNT(*) FROM deduplication_store WHERE idempotency_key = ?", Integer.class, key);
 			assertNotNull(rowCountAfterCleanup);
 			assertEquals(0, rowCountAfterCleanup);
 		}
@@ -143,23 +144,29 @@ class JdbcDeduplicationStoreTest {
 		@Test
 		@DisplayName("markSeen rejects a null idempotency key with IllegalArgumentException and never hits the database")
 		void markSeen_withNullKey_throwsIllegalArgumentException() {
-			assertThrows(IllegalArgumentException.class, () -> store.markSeen(null));
-			Integer rowCount = jdbcTemplate.queryForObject(
+			Integer countBefore = jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM deduplication_store", Integer.class);
-			
-			assertNotNull(rowCount);
-			assertEquals(0, rowCount);
+			assertThrows(IllegalArgumentException.class, () -> store.markSeen(null));
+			Integer countAfter = jdbcTemplate.queryForObject(
+					"SELECT COUNT(*) FROM deduplication_store", Integer.class);
+
+			assertNotNull(countBefore);
+			assertNotNull(countAfter);
+			assertEquals(countBefore, countAfter, "No row should be inserted for a null key");
 		}
 		
 		@Test
 		@DisplayName("markSeen rejects a blank idempotency key with IllegalArgumentException and never hits the database")
 		void markSeen_withBlankKey_throwsIllegalArgumentException() {
-			assertThrows(IllegalArgumentException.class, () -> store.markSeen("   "));
-			Integer rowCount = jdbcTemplate.queryForObject(
+			Integer countBefore = jdbcTemplate.queryForObject(
 					"SELECT COUNT(*) FROM deduplication_store", Integer.class);
-			
-			assertNotNull(rowCount);
-			assertEquals(0, rowCount);
+			assertThrows(IllegalArgumentException.class, () -> store.markSeen("   "));
+			Integer countAfter = jdbcTemplate.queryForObject(
+					"SELECT COUNT(*) FROM deduplication_store", Integer.class);
+
+			assertNotNull(countBefore);
+			assertNotNull(countAfter);
+			assertEquals(countBefore, countAfter, "No row should be inserted for a blank key");
 		}
 	}
 	
@@ -303,11 +310,11 @@ class JdbcDeduplicationStoreTest {
 					});
 				}
 				
-				readyLatch.await();
+				assertTrue(readyLatch.await(10, TimeUnit.SECONDS), "Workers were not ready in time");
 				startLatch.countDown();
-				doneLatch.await();
+				assertTrue(doneLatch.await(30, TimeUnit.SECONDS), "Workers did not finish in time");
 				executor.shutdown();
-				
+
 				assertEquals(1, successCount.get(),
 						"Expected exactly one thread to successfully mark the key");
 				assertEquals(threadCount - 1, duplicateCount.get(),
@@ -353,11 +360,11 @@ class JdbcDeduplicationStoreTest {
 					});
 				}
 				
-				readyLatch.await();
+				assertTrue(readyLatch.await(10, TimeUnit.SECONDS), "Workers were not ready in time");
 				startLatch.countDown();
-				doneLatch.await();
+				assertTrue(doneLatch.await(30, TimeUnit.SECONDS), "Workers did not finish in time");
 				executor.shutdown();
-				
+
 				assertEquals(threadCount, successCount.get(),
 						"Expected every thread with its own key to succeed");
 				assertEquals(0, duplicateCount.get(),
