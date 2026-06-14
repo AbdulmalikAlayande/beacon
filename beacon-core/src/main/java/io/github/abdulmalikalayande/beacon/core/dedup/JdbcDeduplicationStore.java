@@ -10,13 +10,17 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 
+
+import java.util.Objects;
+
+
 public class JdbcDeduplicationStore implements DeduplicationStore {
-	
+
 	private final JdbcTemplate jdbcTemplate;
 	public static final Logger logger = LoggerFactory.getLogger(JdbcDeduplicationStore.class);
-	
+
 	public JdbcDeduplicationStore(JdbcTemplate jdbcTemplate){
-		this.jdbcTemplate = jdbcTemplate;
+		this.jdbcTemplate = Objects.requireNonNull(jdbcTemplate, "JdbcTemplate must not be null");
 		if (jdbcTemplate.getDataSource() == null) {
 			throw new IllegalArgumentException("JdbcTemplate must have a DataSource configured");
 		}
@@ -46,8 +50,8 @@ public class JdbcDeduplicationStore implements DeduplicationStore {
 			logger.error("Duplicate idempotency key detected: {}", idempotencyKey, e);
 			throw new DuplicateNotificationException(idempotencyKey);
 		} catch (DataAccessException e) {
-			logger.error("{}\n", e.getMessage(), e);
-			throw new NotificationException(e.getMessage());
+			logger.error("Failed to persist idempotency key: {}", idempotencyKey, e);
+			throw new NotificationException(e.getMessage(), e);
 		}
 	}
 	
