@@ -32,7 +32,14 @@ public class RedisDeduplicationStore implements DeduplicationStore {
 	public RedisDeduplicationStore(StringRedisTemplate redisTemplate, Clock clock, Duration ttl, String keyPrefix) {
 		this.redisTemplate = Objects.requireNonNull(redisTemplate, "StringRedisTemplate must not be null");
 		this.clock = Objects.requireNonNull(clock, "Clock must not be null");
-		this.ttl = Objects.requireNonNull(ttl, "ttl must not be null");
+		Objects.requireNonNull(ttl, "ttl must not be null");
+		if (ttl.isZero() || ttl.isNegative()) {
+			throw new IllegalArgumentException("ttl must be strictly positive");
+		}
+		if (ttl.getSeconds() > Integer.MAX_VALUE) {
+			throw new IllegalArgumentException("ttl seconds cannot exceed Integer.MAX_VALUE");
+		}
+		this.ttl = ttl;
 		this.keyPrefix = keyPrefix == null || keyPrefix.isBlank() ? DEFAULT_KEY_PREFIX : keyPrefix;
 	}
 
