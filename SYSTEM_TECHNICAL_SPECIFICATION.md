@@ -46,7 +46,7 @@
 
 ## 1. Overview
 
-This is the technical specification for a multi-channel notification system that delivers push notifications, SMS, and email to 1M+ users. The system handles both event-driven notifications (triggered by other services) and batch notifications (triggered by admins or scheduled jobs). It is designed to never send duplicates, never miss a send, and keep working when third-party providers go down.
+This is the technical specification for a multichannel notification system that delivers push notifications, SMS, and email to 1M+ users. The system handles both event-driven notifications (triggered by other services) and batch notifications (triggered by admins or scheduled jobs). It is designed to never send duplicates, never miss a send, and keep working when third-party providers go down.
 
 ---
 
