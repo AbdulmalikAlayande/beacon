@@ -87,7 +87,7 @@ At 1M+ users, the system needs to handle high throughput without dropping messag
 
 > **Note:** The high-level system/block diagram of the system: API Gateway → Ingestion/Routing → Redis (Dedup Cache) → Message Brokers (Push, SMS, Email topics) → Worker Pools → External Providers, with the Dead Letter Queue visually distinct and the Webhook Receiver looping backward from the providers into the internal Event Stream and Database.
 
-<p align="center">
+<p style="text-align: center;">
   <img src="docs/Notification-System-High-level-Architecture.png" alt="High-Level Architecture Diagram">
 </p>
 
@@ -247,7 +247,7 @@ This section addresses a subtle but critical correctness problem that only shows
 
 **The problem.** Imagine the host is processing a payment. Their code does three things in one transaction: save the payment, call `notificationService.send(receipt)`, then update the user's balance. If that last step throws, Spring rolls back the entire transaction — the payment never happened. But if the library already pushed the receipt to the queue the moment `send()` was called, the user gets an email confirming a payment that was rolled back and never existed.
 
-**The fix.** The library does not dispatch the notification immediately when the host calls `send()`. Instead, `send()` publishes a Spring `ApplicationEvent` and returns. The library listens for that event with `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`, which means the notification is only written to the outbound queue *after* the host's database transaction commits successfully. If the host's transaction rolls back, the event is never processed and the notification is silently discarded — exactly what we want. The queue write itself runs in a `REQUIRES_NEW` propagation so that persisting the queue entry is its own atomic unit and does not get entangled with the host's transaction lifecycle after commit.
+**The fix.** The library does not dispatch the notification immediately when the host calls `send()`. Instead, `send()` publishes a Spring `ApplicationEvent` and returns. The library listens for that event with `@TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)`, which means the notification is only written to the outbound queue *after* the host's database transaction commits successfully. If the host's transaction rolls back, the event is never processed and the notification is silently discarded — exactly what we want. The queue write itself runs in a `Propagation.REQUIRES_NEW` propagation mode so that persisting the queue entry is its own atomic unit and does not get entangled with the host's transaction lifecycle after commit.
 
 **When there is no transaction.** If the host calls `send()` outside any transaction (no active transaction context), the library falls back to dispatching immediately, since there is no commit to wait for. This keeps the simple case simple while making the transactional case correct.
 
@@ -321,7 +321,7 @@ To solve this, the library ships a `NotificationWebhookSecurityConfigurer` utili
 This is the core tracking table. Every notification task (one user, one channel, one message) gets a row here.
 
 | Column | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `id` | UUID (PK) | Unique identifier for this notification task |
 | `idempotency_key` | VARCHAR (UNIQUE) | Traces back to the original triggering event |
 | `user_id` | BIGINT (NOT NULL) | The recipient |
@@ -341,7 +341,7 @@ This table is **partitioned by month** on `created_at` to keep the active workin
 Stores each user's contact details, channel opt-ins, and timezone/quiet hours configuration.
 
 | Column | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `user_id` | BIGINT (PK) | The user |
 | `email` | VARCHAR | User's email address (encrypted at rest) |
 | `phone_number` | VARCHAR | User's phone number (encrypted at rest) |
@@ -358,7 +358,7 @@ Stores each user's contact details, channel opt-ins, and timezone/quiet hours co
 Contacts that must not receive notifications on a specific channel.
 
 | Column | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `id` | BIGINT (PK) | Auto-increment |
 | `contact` | VARCHAR (UNIQUE) | Email address or phone number |
 | `channel` | VARCHAR (NOT NULL) | `email` or `sms` |
@@ -503,7 +503,7 @@ This is the complete journey of a notification from trigger to delivery:
 The table below lists the default (zero-infrastructure) choice and the pluggable (scaled) alternative for each component. The defaults are what ship out of the box and require nothing beyond a PostgreSQL database. The pluggable options are what a host opts into when they outgrow the defaults.
 
 | Component | Default (zero-config) | Pluggable (scaled) | Why |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Queue / Message Broker | PostgreSQL table + `FOR UPDATE SKIP LOCKED` poller | Kafka, RabbitMQ, or Pulsar | Durable by default with no extra infra; swap to a broker for high throughput |
 | Dedup and Lock Store | In-process lock + DB unique constraint | Redis (`SETNX` with TTL) | DB-level locking works across host instances; Redis for very high concurrency |
 | Status Event Stream | In-process Spring `ApplicationEvent` publisher | Kafka or Redis Streams | Decouples status tracking from delivery; broker only needed at scale |
