@@ -2,19 +2,23 @@ package io.github.abdulmalikalayande.beacon.core.dedup;
 
 import io.github.abdulmalikalayande.beacon.api.exception.DuplicateNotificationException;
 import io.github.abdulmalikalayande.beacon.api.port.DeduplicationStore;
+import org.apache.commons.lang3.StringUtils;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ *
+ */
 /*
 * TODO: To Implement a scheduled executor service, like a background thread or task that runs at regular intervals
 *  (e.g., every minute) to check for expired entries (entries older than the specified time limit) and remove them from
 *  the map. This way, we can ensure that the cleanup process is automated and does not rely on user interactions.
 *
 * TODO: On this implementation above I think we may want to leave it out, the cleanup that relies on user interactions
-*  already works fine, but maybe we can consult others on the best ways to build a perfect Rentention Policy for this.
+*  already works fine, but maybe we can consult others on the best ways to build a perfect Retention Policy for this.
 */
 public class DefaultDeduplicationStore implements DeduplicationStore {
 	
@@ -52,7 +56,7 @@ public class DefaultDeduplicationStore implements DeduplicationStore {
 		   Finding the oldest entry is straightforward, we scan the map for the entry with the smallest Instant value.
 		   It's an O(n) scan, but it only happens when the map is at capacity AND nothing is expired, which should be rare.
 		   */
-		if (idempotencyKey == null || idempotencyKey.isBlank())
+		if (StringUtils.isBlank(idempotencyKey))
 			throw new IllegalArgumentException("idempotencyKey must not be null or blank");
 		
 		if (defaultDedupStore.size() >= storeSize) {
@@ -102,7 +106,7 @@ public class DefaultDeduplicationStore implements DeduplicationStore {
 	
 	@Override
 	public boolean isSeen(String idempotencyKey) {
-		if (idempotencyKey == null || idempotencyKey.isBlank())
+		if (StringUtils.isBlank(idempotencyKey))
 			throw new IllegalArgumentException("idempotencyKey must not be null or blank");
 		return defaultDedupStore.containsKey(idempotencyKey);
 	}

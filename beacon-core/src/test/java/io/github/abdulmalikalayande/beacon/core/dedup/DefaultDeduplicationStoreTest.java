@@ -14,13 +14,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("DefaultDeduplicationStore")
 class DefaultDeduplicationStoreTest {
-
-	private Clock clock;
+	
 	private DefaultDeduplicationStore store;
 
 	@BeforeEach
 	void setUp() {
-		clock = Clock.fixed(Instant.parse("2026-07-25T15:00:00Z"), Clock.systemUTC().getZone());
+		Clock clock = Clock.fixed(Instant.parse("2026-07-25T15:00:00Z"), Clock.systemUTC().getZone());
 		store = new DefaultDeduplicationStore(clock);
 	}
 
