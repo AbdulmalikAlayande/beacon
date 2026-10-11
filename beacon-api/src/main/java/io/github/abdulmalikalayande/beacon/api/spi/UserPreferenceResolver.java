@@ -8,7 +8,7 @@ import java.util.List;
  * Resolves a user's contact details and channel preferences.
  *
  * <p><b>Host implements this.</b> It is the bridge between Beacon and the host's
- * user data. Beacon never queries the host's user tables directly — it asks
+ * user data. Beacon does not query the host's user tables directly, it asks
  * through this interface at delivery time. The host fetches from wherever its
  * user data lives (database, cache, user service) and returns a
  * {@link NotificationPreference}. The host is responsible for decrypting any
