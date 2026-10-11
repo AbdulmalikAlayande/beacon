@@ -37,7 +37,8 @@ public class RedisDeduplicationStore implements DeduplicationStore {
 		if (StringUtils.isBlank(idempotencyKey)) {
 			throw new IllegalArgumentException("idempotencyKey must not be null or blank");
 		}
-		return redisTemplate.hasKey(String.format(BEACON_DEDUP_NAMESPACE, idempotencyKey));
+		Boolean exists = redisTemplate.hasKey(String.format(BEACON_DEDUP_NAMESPACE, idempotencyKey));
+		return exists != null && exists;
 	}
 	
 	@Override

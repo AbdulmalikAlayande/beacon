@@ -59,8 +59,9 @@ class RedisDeduplicationStoreTest {
 	}
 	
 	@Nested
-	@DisplayName("")
+	@DisplayName("markSeen — claiming, rejecting, expiring, and validating keys")
 	class MarkSeenBehaviorTests {
+		
 		@Test
 		@DisplayName("markSeen inserts a never-before-seen key, it is claimed successfully and does not throw")
 		void insertNewKey_MarkSeen_DoesNotThrow () {
@@ -95,22 +96,36 @@ class RedisDeduplicationStoreTest {
 			store.markSeen(idempotencyKey);
 			assertThrows(DuplicateNotificationException.class, () -> store.markSeen(idempotencyKey));
 		}
-			
+		
 		@Test
-		@DisplayName("The reject of an existing key does not reset or extend the TTL of the key")
-		void sameKeyClaimedMoreThanOnce_RejectOccurs_TTLOfExistingKeyNotResetOrExtended () {
+		@DisplayName("Rejecting a duplicate does not reset or extend the existing key's TTL")
+		void sameKeyClaimedMoreThanOnce_RejectOccurs_TTLOfExistingKeyNotResetOrExtended() {
+			RedisDeduplicationStore dedupStore = new RedisDeduplicationStore(redisTemplate, clock, 30);
 			String idempotencyKey = "a-new-key";
-			store.markSeen(idempotencyKey);
-			Long ttlBefore = redisTemplate.getExpire(idempotencyKey);
-			assertThrows(DuplicateNotificationException.class, () -> store.markSeen(idempotencyKey));
-			Long ttlAfter = redisTemplate.getExpire(idempotencyKey);
-			assertTrue(ttlAfter <= ttlBefore, "TTL should not be reset or extended after a duplicate key is rejected");
-		}
+			String redisKey = String.format(BEACON_DEDUP_NAMESPACE, idempotencyKey);
 			
+			dedupStore.markSeen(idempotencyKey);
+			
+			Awaitility.await()
+					.atMost(5, TimeUnit.SECONDS)
+					.pollInterval(200, TimeUnit.MILLISECONDS)
+					.until(() -> redisTemplate.getExpire(redisKey) < 30);
+			
+			Long ttlBefore = redisTemplate.getExpire(redisKey);
+			assertThrows(DuplicateNotificationException.class, () -> dedupStore.markSeen(idempotencyKey));
+			Long ttlAfter = redisTemplate.getExpire(redisKey);
+			
+			assertNotNull(ttlBefore);
+			assertNotNull(ttlAfter);
+			assertTrue(ttlAfter <= ttlBefore,
+					"TTL must keep counting down, not be refreshed by a rejected duplicate");
+			assertTrue(ttlAfter < 30,
+					"TTL must not be reset back to the full retention window on a duplicate");
+		}
+		
 		@Test
 		@DisplayName("The thrown exception carries the offending key in its message")
-		void __ () {
-			String idempotencyKey = "a-new-key";
+		void sameKeyClaimedMoreThanOnce_ExceptionCarriesTheDuplicatedKey() {	String idempotencyKey = "a-new-key";
 			store.markSeen(idempotencyKey);
 			DuplicateNotificationException exception = assertThrows(DuplicateNotificationException.class, () -> store.markSeen(idempotencyKey));
 			assertTrue(exception.getMessage().contains(idempotencyKey));
@@ -154,7 +169,6 @@ class RedisDeduplicationStoreTest {
 		void keyExpiredAfterTTL_CanBeClaimedAgain() {
 			
 			RedisDeduplicationStore dedupStore = new RedisDeduplicationStore(redisTemplate, clock, 3);
-			
 			String idempotencyKey = "expiring-key";
 
 			dedupStore.markSeen(idempotencyKey);
