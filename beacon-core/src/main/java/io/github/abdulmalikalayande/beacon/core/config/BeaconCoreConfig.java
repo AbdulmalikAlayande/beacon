@@ -1,5 +1,7 @@
 package io.github.abdulmalikalayande.beacon.core.config;
 
+import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
+import io.github.abdulmalikalayande.beacon.core.circuitbreaker.DefaultProviderCircuitBreaker;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,5 +22,18 @@ public class BeaconCoreConfig {
 	@ConditionalOnMissingBean(Clock.class)
 	public Clock clock() {
 		return Clock.systemUTC();
+	}
+
+	/**
+	 * Provides a default in-memory {@link ProviderCircuitBreaker} bean if no other circuit breaker
+	 * is defined in the application context.
+	 *
+	 * @param clock the injected Clock bean
+	 * @return default circuit breaker instance
+	 */
+	@Bean
+	@ConditionalOnMissingBean(ProviderCircuitBreaker.class)
+	public ProviderCircuitBreaker providerCircuitBreaker(Clock clock) {
+		return new DefaultProviderCircuitBreaker(clock);
 	}
 }
