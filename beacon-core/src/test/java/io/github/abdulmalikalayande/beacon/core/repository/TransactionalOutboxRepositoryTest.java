@@ -189,9 +189,7 @@ public class TransactionalOutboxRepositoryTest {
 			notificationStatusRepository.saveAllAndFlush(List.of(notificationStatusEntity2, notificationStatusEntity3));
 		}, "");
 		
-		deliveryTaskRepository.findAll().forEach(deliveryTaskEntity -> {
-			assertNotEquals(null, deliveryTaskEntity.getId(), "All delivery task entities should have an id");
-		});
+		deliveryTaskRepository.findAll().forEach(deliveryTaskEntity -> assertNotEquals(null, deliveryTaskEntity.getId(), "All delivery task entities should have an id"));
 	}
 	
 	@Test
