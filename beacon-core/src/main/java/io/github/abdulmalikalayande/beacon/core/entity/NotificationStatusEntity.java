@@ -1,5 +1,6 @@
 package io.github.abdulmalikalayande.beacon.core.entity;
 
+import io.github.abdulmalikalayande.beacon.api.dto.DeliveryTask;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationChannel;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationStatus;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationType;
@@ -67,14 +68,14 @@ public class NotificationStatusEntity {
 	 * Provider and failure reason are left null — they are set when
 	 * delivery is actually attempted.
 	 */
-	public static NotificationStatusEntity fromTask(DeliveryTaskEntity task, Clock clock) {
+	public static NotificationStatusEntity fromTask(DeliveryTask task, Clock clock) {
 		Instant now = clock.instant();
 		NotificationStatusEntity record = new NotificationStatusEntity();
-		record.notificationId = task.getNotificationId();
-		record.idempotencyKey = task.getIdempotencyKey();
-		record.userId = task.getUserId();
-		record.channel = task.getChannel();
-		record.type = task.getType();
+		record.notificationId = task.notificationId();
+		record.idempotencyKey = task.idempotencyKey();
+		record.userId = task.userId();
+		record.channel = task.channel();
+		record.type = task.type();
 		record.status = NotificationStatus.QUEUED;
 		record.retryCount = 0;
 		record.createdAt = now;
