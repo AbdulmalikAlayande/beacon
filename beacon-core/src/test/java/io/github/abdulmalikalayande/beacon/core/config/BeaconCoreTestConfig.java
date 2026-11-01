@@ -14,4 +14,5 @@ public class BeaconCoreTestConfig {
 	public Clock testClock() {
 		return Clock.fixed(Instant.parse("2026-05-31T03:00:00Z"), ZoneId.of("Africa/Lagos"));
 	}
+	
 }
