@@ -1,6 +1,8 @@
 package io.github.abdulmalikalayande.beacon.api.port;
 
 import io.github.abdulmalikalayande.beacon.api.dto.DeliveryTask;
+import org.jspecify.annotations.NonNull;
+import org.springframework.validation.annotation.Validated;
 
 import java.time.Instant;
 
@@ -19,7 +21,7 @@ public interface NotificationQueue {
      *
      * @param task the delivery task
      */
-    void enqueue(DeliveryTask task);
+    void enqueue(@NonNull DeliveryTask task);
 
     /**
      * Enqueue a task to become eligible for delivery only at or after the given
