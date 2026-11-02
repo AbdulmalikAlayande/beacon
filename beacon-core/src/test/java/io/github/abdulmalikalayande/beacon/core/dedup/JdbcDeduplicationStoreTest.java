@@ -92,7 +92,8 @@ class JdbcDeduplicationStoreTest {
 		@Test
 		// With the shared transaction gone, the row we insert actually saves in the container's database after the test
 		// But since we use a UUID in each new test, it does not matter at all; we will never run into a duplicate key error
-		// We just need to be aware that the auto-cleanup is off for any method we annotate this way
+		// We just need to be aware that the auto-cleanup is off for any method we annotate this way, hence why we do
+		// manual cleanup below.
 		@Transactional(propagation = Propagation.NOT_SUPPORTED)
 		@DisplayName("markSeen does not insert a second row when a duplicate is rejected, leaving exactly one row for the key")
 		void markSeen_withAlreadyClaimedKey_doesNotCreateASecondRow() {

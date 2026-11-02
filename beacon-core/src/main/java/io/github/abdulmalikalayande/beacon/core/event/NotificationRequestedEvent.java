@@ -5,6 +5,7 @@ import io.github.abdulmalikalayande.beacon.api.enums.NotificationPriority;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationType;
 import io.github.abdulmalikalayande.beacon.api.request.NotificationRequest;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,6 +30,7 @@ public record NotificationRequestedEvent(
 		UUID notificationId,
 		String idempotencyKey,
 		String userId,
+		Instant scheduledAt,
 		NotificationType type,
 		NotificationPriority priority,
 		List<NotificationChannel> preferredChannels,
@@ -44,6 +46,7 @@ public record NotificationRequestedEvent(
 				notificationId,
 				request.idempotencyKey(),
 				request.userId(),
+				request.scheduledAt(),
 				request.type(),
 				request.priority(),
 				request.preferredChannels(),

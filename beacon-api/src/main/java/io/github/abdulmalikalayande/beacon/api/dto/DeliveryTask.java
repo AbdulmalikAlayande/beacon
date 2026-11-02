@@ -5,6 +5,7 @@ import io.github.abdulmalikalayande.beacon.api.enums.NotificationPriority;
 import io.github.abdulmalikalayande.beacon.api.enums.NotificationType;
 
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * A single unit of delivery work: one user, one channel, one message.
@@ -24,11 +25,11 @@ import java.time.Instant;
  * @param encryptedContext the template context, encrypted at rest
  * @param retryCount       how many delivery attempts have been made so far
  * @param createdAt        when this task was created
- * @param scheduledAt      when this task should be delivered, or {@code null} for now
+ * @param availableAt      when this task should be delivered, or {@code null} for now
  */
 public record DeliveryTask(
-        String taskId,
-        String notificationId,
+        UUID taskId,
+        UUID notificationId,
         String idempotencyKey,
         String userId,
         NotificationChannel channel,
@@ -37,7 +38,7 @@ public record DeliveryTask(
         String encryptedContext,
         int retryCount,
         Instant createdAt,
-        Instant scheduledAt
+        Instant availableAt
 ) {
     /**
      * @return a copy of this task with the retry count incremented by one
@@ -45,7 +46,7 @@ public record DeliveryTask(
     public DeliveryTask withIncrementedRetry() {
         return new DeliveryTask(
                 taskId, notificationId, idempotencyKey, userId, channel, type,
-                priority, encryptedContext, retryCount + 1, createdAt, scheduledAt
+                priority, encryptedContext, retryCount + 1, createdAt, availableAt
         );
     }
 }
