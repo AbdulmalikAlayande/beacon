@@ -1,7 +1,7 @@
-package io.github.abdulmalikalayande.beacon.core.circuitbreaker;
+package io.github.abdulmalikalayande.beacon.core.resilience;
 
 import io.github.abdulmalikalayande.beacon.api.enums.ProviderName;
-import io.github.abdulmalikalayande.beacon.core.circuitbreaker.DefaultProviderCircuitBreaker.State;
+import io.github.abdulmalikalayande.beacon.core.resilience.DefaultProviderCircuitBreaker.State;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

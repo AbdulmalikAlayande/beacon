@@ -2,7 +2,7 @@ package io.github.abdulmalikalayande.beacon.core.config;
 
 
 import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
-import io.github.abdulmalikalayande.beacon.core.circuitbreaker.DefaultProviderCircuitBreaker;
+import io.github.abdulmalikalayande.beacon.core.resilience.DefaultProviderCircuitBreaker;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;

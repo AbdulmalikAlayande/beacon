@@ -1,4 +1,4 @@
-package io.github.abdulmalikalayande.beacon.core.circuitbreaker;
+package io.github.abdulmalikalayande.beacon.core.resilience;
 
 import io.github.abdulmalikalayande.beacon.api.enums.ProviderName;
 import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
