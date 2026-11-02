@@ -50,6 +50,13 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- beacon-api is a library consumed by other modules and by host
+                         applications. Repackaging it as an executable Spring Boot jar
+                         moves its classes under BOOT-INF/classes, where dependents
+                         cannot see them. -->
+                    <skip>true</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>

@@ -386,10 +386,10 @@
 - **Naming (2026-11-02):** Documents call this component the "queue poller" in prose. The class name is decided when it is built; `OutboxPoller` is only the name used by the test scaffold. The "outbox" wording in V1's comment and in test class names contradicts D-032's naming (G-34).
 
 ### D-097 Where the queue bean is registered
-- **Status:** Accepted, **violated** (see G-02).
+- **Status:** Accepted, in code (G-02 fixed on 2026-11-02).
 - **Decision:** The `DatabaseNotificationQueue` bean lives in its own configuration class in `src/main` (`BeaconQueueConfig`), with `@ConditionalOnMissingBean(NotificationQueue.class)`, not in `BeaconCoreConfig`.
 - **Why:** `BeaconCoreConfigTest` loads `BeaconCoreConfig` without a database; a bean needing `DeliveryTaskRepository` there breaks it.
-- **Current violation (2026-11-02):** `BeaconQueueConfig` is now in `src/main`, but `BeaconCoreConfig` (lines 29-34) still declares the same bean. There are two definitions named `databaseNotificationQueue`, and only the one in `BeaconCoreConfig` checks `beacon.queue.type`.
+- **Resolved (2026-11-02):** The duplicate `databaseNotificationQueue` method was removed from `BeaconCoreConfig`, so `BeaconQueueConfig` holds the only definition. That definition does not check `beacon.queue.type`, which the removed one did. With only the database queue built this changes nothing today, but D-016 expects the property condition once a second queue implementation exists.
 
 ### D-098 `enqueueDelayed`
 - **Status:** Open. Removal agreed on 2026-11-02 (it stays Open until Abdulmalik removes it), since `availableAt` already expresses a delay and two ways to do one thing tend to drift apart.
@@ -416,7 +416,12 @@
 - **Status:** Planned. A token bucket per provider, in process by default, distributed (Redis) optionally.
 
 ### D-103 A circuit breaker per provider, with fallback
-- **Status:** Planned.
+- **Status:** Accepted, partly in code. The breaker is built (`DefaultProviderCircuitBreaker`, #21, from issue #6). Failing over to the fallback provider when a circuit is open is not built yet; it belongs to the provider registry (D-100) and the worker.
+- **Decision:** Each `ProviderName` has its own circuit: CLOSED, OPEN, HALF_OPEN. Five consecutive failures open it. After a 30-second cooldown, the first `isOpen()` call returns `false` and becomes the single probe; every other caller still sees the circuit as open. One successful probe closes the circuit; a failed probe reopens it with a new cooldown. The defaults come from issue #6, and both values are constructor parameters. The class lives in `core.resilience`, the package the rate limiter (D-102) will share.
+- **Lost probe (decided 2026-11-02):** if the probe never reports back (for example, its worker crashed), a new probe is granted once another cooldown has passed since the first was granted.
+- **Why:** A breaker exists so workers stop waiting on a provider that is down. Letting only one probe through tests recovery without sending every queued task to a provider that may still be failing. The lost-probe rule is there because, without it, one crashed worker would leave the circuit half-open, and the provider unusable, for good.
+- **Also decided:** results recorded while OPEN come from calls started before the trip and are ignored, so a late success does not close the circuit and a late failure does not extend the cooldown. `getState()` is a pure read and never grants the probe. The breaker does not see HTTP status codes; the caller must not record a 429 as a failure (D-101).
+- **Rejected:** Letting every caller through once the cooldown ends (the first version in #17), which sends the full load to a provider that may still be down. Requiring three successful probes to close, which has no meaning when only one probe is in flight.
 
 ### D-104 The suppression check comes before sending
 - **Status:** Planned. Hard bounces, spam complaints, unsubscribes and admin suppressions block delivery; the task is marked `SUPPRESSED`. This is a legal and sender-reputation requirement.
@@ -543,7 +548,7 @@ Every gap below is a code finding for Abdulmalik to fix, except G-14, which is a
 ### 13.1 Gaps listed on 2026-11-01
 
 - **G-01** `beacon-api` depends on Spring: the POM pulls `spring-boot-starter` and `hibernate-validator`, `BeaconApiApplication` exists, and `NotificationQueue` imports Spring's `@Validated` (never applied). Breaks D-011. *Still open.*
-- **G-02** The queue bean placement breaks D-097. *Still open, changed:* `BeaconQueueConfig` is now in `src/main`, but `BeaconCoreConfig.java:29-34` still declares the same bean, so there are two `databaseNotificationQueue` definitions and only one checks `beacon.queue.type`. `BeaconCoreConfigTest` is likely to fail because of it (G-42).
+- **G-02** The queue bean placement breaks D-097. `BeaconQueueConfig` was in `src/main`, but `BeaconCoreConfig.java:29-34` still declared the same bean, so there were two `databaseNotificationQueue` definitions and only one checked `beacon.queue.type`. **Fixed** (2026-11-02): the method was removed from `BeaconCoreConfig`; see D-097 for the `beacon.queue.type` condition that went with it.
 - **G-03** `DatabaseNotificationQueueTest` never clears `notification_queue`, so the row count in "several tasks" depends on test order. *Still open:* `tearDown` is empty (line 55).
 - **G-04** A request without priority fails after commit (D-059 not applied). **Fixed** (listener `resolvePriority`).
 - **G-05** `encryptContext` returns `null`, so the context never reaches the worker (D-064 not applied). **Fixed** (`AesGcmContextEncryptor`, listener line 67). The key is not wired yet (O-06).
@@ -593,7 +598,7 @@ Every gap below is a code finding for Abdulmalik to fix, except G-14, which is a
 
 ### 13.4 Gaps added on 2026-11-02: tests
 
-- **G-42** `BeaconCoreConfigTest` (4 tests) is likely to fail (not run): the runner loads `BeaconCoreConfig`, whose queue bean needs a `DeliveryTaskRepository` the runner does not provide. Caused by G-02.
+- **G-42** `BeaconCoreConfigTest` (4 tests) failed: the runner loads `BeaconCoreConfig`, whose queue bean needed a `DeliveryTaskRepository` the runner does not provide. Caused by G-02. **Fixed** with G-02 (2026-11-02); confirmed by running: 4 of 4 failed before the fix, 4 of 4 pass after it.
 - **G-43** `DatabaseNotificationQueueTest.putIn_null_rejectedClearly` (lines 131-134) expects `ConstraintViolationException`, but nothing validates `enqueue`; it is likely to hit a `NullPointerException` instead (not run).
 - **G-44** Tests that pass for the wrong reason: `TransactionalOutboxRepositoryTest:174-193` checks the wrong repository; `TransactionalOutboxRepositoryTest:104` compares the cached instance with itself; `TransactionalOutboxRepositoryTest` Variant1 (lines 129-153) uses the database's `NOW()` and a `type` of `"WELCOME"`; `JdbcDeduplicationStoreTest:71-77` and `BeaconCoreApplicationTests` are empty.
 - **G-45** `TransactionalOutboxRepositoryTest:226-247` holds a leftover `main` that loops forever and has an inverted condition at line 242.

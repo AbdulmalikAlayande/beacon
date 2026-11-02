@@ -1,10 +1,8 @@
 package io.github.abdulmalikalayande.beacon.core.config;
 
-import io.github.abdulmalikalayande.beacon.api.port.NotificationQueue;
-import io.github.abdulmalikalayande.beacon.core.queue.DatabaseNotificationQueue;
-import io.github.abdulmalikalayande.beacon.core.repository.DeliveryTaskRepository;
+import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
+import io.github.abdulmalikalayande.beacon.core.resilience.DefaultProviderCircuitBreaker;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -25,11 +23,17 @@ public class BeaconCoreConfig {
 	public Clock clock() {
 		return Clock.systemUTC();
 	}
-	
+
+	/**
+	 * Provides a default in-memory {@link ProviderCircuitBreaker} bean if no other circuit breaker
+	 * is defined in the application context.
+	 *
+	 * @param clock the injected Clock bean
+	 * @return default circuit breaker instance
+	 */
 	@Bean
-	@ConditionalOnMissingBean(NotificationQueue.class)
-	@ConditionalOnProperty(name = "beacon.queue.type", havingValue = "DATABASE", matchIfMissing = true)
-	public NotificationQueue databaseNotificationQueue(Clock clock, DeliveryTaskRepository repository) {
-		return new DatabaseNotificationQueue(clock, repository);
+	@ConditionalOnMissingBean(ProviderCircuitBreaker.class)
+	public ProviderCircuitBreaker providerCircuitBreaker(Clock clock) {
+		return new DefaultProviderCircuitBreaker(clock);
 	}
 }
