@@ -1,7 +1,7 @@
 package io.github.abdulmalikalayande.beacon.core.config;
 
 import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
-import io.github.abdulmalikalayande.beacon.core.circuitbreaker.DefaultProviderCircuitBreaker;
+import io.github.abdulmalikalayande.beacon.core.resilience.DefaultProviderCircuitBreaker;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
