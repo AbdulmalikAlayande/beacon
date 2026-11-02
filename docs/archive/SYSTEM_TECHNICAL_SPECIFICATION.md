@@ -88,7 +88,7 @@ At 1M+ users, the system needs to handle high throughput without dropping messag
 > **Note:** The high-level system/block diagram of the system: API Gateway → Ingestion/Routing → Redis (Dedup Cache) → Message Brokers (Push, SMS, Email topics) → Worker Pools → External Providers, with the Dead Letter Queue visually distinct and the Webhook Receiver looping backward from the providers into the internal Event Stream and Database.
 
 <p style="text-align: center;">
-  <img src="docs/Notification-System-High-level-Architecture.png" alt="High-Level Architecture Diagram">
+  <img src="Notification-System-High-level-Architecture.png" alt="High-Level Architecture Diagram">
 </p>
 
 The system follows a pipeline architecture. A notification enters through the ingestion layer, gets routed to the right users and channels, passes through compliance and quiet hours checks, lands in a channel-specific queue, gets picked up by a delivery worker, and is sent to the user through a third-party provider. The provider later confirms actual delivery through an asynchronous webhook. Every step is tracked, and failures are caught through retries, fallbacks, and daily reconciliation.
