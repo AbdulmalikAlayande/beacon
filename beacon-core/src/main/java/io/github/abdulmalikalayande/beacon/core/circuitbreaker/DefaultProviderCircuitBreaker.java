@@ -13,214 +13,234 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Default in-memory implementation of {@link ProviderCircuitBreaker}.
  *
- * <p>Tracks delivery provider availability using a 3-state finite state machine
- * ({@link State#CLOSED}, {@link State#OPEN}, {@link State#HALF_OPEN}) per provider.
- * When a provider suffers consecutive failures reaching {@code failureThreshold},
- * its circuit trips to {@code OPEN}, short-circuiting calls so workers can immediately
- * failover to a fallback provider without wasting connection/request timeouts.
+ * <p>Each provider has its own circuit with three states:
+ * <ul>
+ *   <li>{@link State#CLOSED}: the provider is healthy and every call is allowed.</li>
+ *   <li>{@link State#OPEN}: {@code failureThreshold} consecutive failures were recorded,
+ *       so {@link #isOpen(ProviderName)} returns {@code true} and workers fail over to a
+ *       fallback provider without waiting on a provider that is down.</li>
+ *   <li>{@link State#HALF_OPEN}: the cooldown has elapsed and exactly one probe call has
+ *       been let through. Every other caller still sees the circuit as open until the probe
+ *       reports back. A successful probe closes the circuit; a failed probe reopens it and
+ *       starts a new cooldown.</li>
+ * </ul>
  *
- * <p>After {@code waitDurationInOpenState} elapses (measured via the injected {@link Clock}),
- * the breaker enters {@code HALF_OPEN} to trial a controlled number of requests. If all
- * {@code permittedHalfOpenTrials} succeed, the circuit resets to {@code CLOSED}. Any failure
- * in {@code HALF_OPEN} immediately returns the circuit to {@code OPEN}.
+ * <p>The probe is granted by {@link #isOpen(ProviderName)} itself: the first caller to ask
+ * after the cooldown receives {@code false} and is expected to make the call and then report
+ * the outcome through {@link #recordSuccess(ProviderName)} or {@link #recordFailure(ProviderName)}.
+ * If the probe never reports back (for example, the worker crashed), a new probe is granted
+ * once another cooldown has passed, so the circuit cannot stay half-open forever.
  *
- * <p><b>Important architectural invariant:</b> HTTP 429 (Too Many Requests) responses
- * must be handled by the rate limiter and NOT recorded as circuit-breaker failures.
+ * <p>HTTP 429 responses must be handled by the rate limiter and must not be recorded here as
+ * failures. The breaker does not inspect status codes; the caller decides what to record.
+ *
+ * <p>All time is read from the injected {@link Clock}.
  */
 public class DefaultProviderCircuitBreaker implements ProviderCircuitBreaker {
 
+    /** The state of a single provider's circuit. */
     public enum State {
+        /** Healthy: calls are allowed. */
         CLOSED,
+        /** Tripped: calls are short-circuited until the cooldown elapses. */
         OPEN,
+        /** Probing: one trial call is in flight; all other calls are short-circuited. */
         HALF_OPEN
     }
 
+    /** Consecutive failures that trip a closed circuit (issue #6). */
     public static final int DEFAULT_FAILURE_THRESHOLD = 5;
-    public static final Duration DEFAULT_WAIT_DURATION = Duration.ofSeconds(60);
-    public static final int DEFAULT_HALF_OPEN_TRIALS = 3;
+
+    /** How long a circuit stays open before a probe is allowed (issue #6). */
+    public static final Duration DEFAULT_COOLDOWN = Duration.ofSeconds(30);
 
     private final Clock clock;
     private final int failureThreshold;
-    private final Duration waitDurationInOpenState;
-    private final int permittedHalfOpenTrials;
+    private final Duration cooldownDuration;
 
-    private final ConcurrentMap<ProviderName, ProviderCircuitState> providerStates = new ConcurrentHashMap<>();
+    private final ConcurrentMap<ProviderName, ProviderCircuit> circuits = new ConcurrentHashMap<>();
 
     /**
-     * Creates a circuit breaker with default settings:
-     * <ul>
-     *   <li>failureThreshold: 5 consecutive failures</li>
-     *   <li>waitDurationInOpenState: 60 seconds</li>
-     *   <li>permittedHalfOpenTrials: 3 consecutive trial successes</li>
-     * </ul>
+     * Creates a circuit breaker with a failure threshold of {@value #DEFAULT_FAILURE_THRESHOLD}
+     * and a cooldown of 30 seconds.
      *
-     * @param clock clock for time evaluations (must not be null)
+     * @param clock clock used for all time evaluations (must not be null)
      */
     public DefaultProviderCircuitBreaker(Clock clock) {
-        this(clock, DEFAULT_FAILURE_THRESHOLD, DEFAULT_WAIT_DURATION, DEFAULT_HALF_OPEN_TRIALS);
+        this(clock, DEFAULT_FAILURE_THRESHOLD, DEFAULT_COOLDOWN);
     }
 
     /**
      * Creates a fully configured circuit breaker.
      *
-     * @param clock                   clock for time evaluations (must not be null)
-     * @param failureThreshold        number of consecutive failures to trip open (&gt; 0)
-     * @param waitDurationInOpenState duration to wait before probing recovery (&gt; 0)
-     * @param permittedHalfOpenTrials consecutive trial successes required to close (&gt; 0)
+     * @param clock            clock used for all time evaluations (must not be null)
+     * @param failureThreshold consecutive failures that trip the circuit (&gt; 0)
+     * @param cooldownDuration how long the circuit stays open before a probe is allowed (&gt; 0)
      */
-    public DefaultProviderCircuitBreaker(Clock clock, int failureThreshold,
-                                         Duration waitDurationInOpenState, int permittedHalfOpenTrials) {
+    public DefaultProviderCircuitBreaker(Clock clock, int failureThreshold, Duration cooldownDuration) {
         this.clock = Objects.requireNonNull(clock, "Clock must not be null");
         if (failureThreshold <= 0) {
             throw new IllegalArgumentException("Failure threshold must be positive");
         }
-        if (waitDurationInOpenState == null || waitDurationInOpenState.isNegative() || waitDurationInOpenState.isZero()) {
-            throw new IllegalArgumentException("Wait duration must be positive");
+        if (cooldownDuration == null || cooldownDuration.isNegative() || cooldownDuration.isZero()) {
+            throw new IllegalArgumentException("Cooldown duration must be positive");
         }
-        if (permittedHalfOpenTrials <= 0) {
-            throw new IllegalArgumentException("Permitted half-open trials must be positive");
-        }
-
         this.failureThreshold = failureThreshold;
-        this.waitDurationInOpenState = waitDurationInOpenState;
-        this.permittedHalfOpenTrials = permittedHalfOpenTrials;
+        this.cooldownDuration = cooldownDuration;
     }
 
+    /**
+     * Returns whether calls to the provider should be short-circuited.
+     *
+     * <p>When the cooldown of an open circuit has elapsed, the first caller receives
+     * {@code false} and becomes the single probe; the circuit moves to
+     * {@link State#HALF_OPEN} and every later caller receives {@code true} until the
+     * probe's outcome is recorded.
+     */
     @Override
     public boolean isOpen(ProviderName provider) {
-        return getStateFor(provider).isOpen();
+        return circuitFor(provider).isOpen();
     }
 
     @Override
     public void recordSuccess(ProviderName provider) {
-        getStateFor(provider).recordSuccess();
+        circuitFor(provider).recordSuccess();
     }
 
     @Override
     public void recordFailure(ProviderName provider) {
-        getStateFor(provider).recordFailure();
+        circuitFor(provider).recordFailure();
     }
 
     /**
-     * Returns the current state of the circuit for the given provider.
+     * Returns the stored state of the provider's circuit. Unlike {@link #isOpen(ProviderName)}
+     * this is a pure read: it never moves the circuit to half-open or grants a probe.
      *
-     * @param provider the provider to check
-     * @return the circuit state
+     * @param provider the provider to inspect
+     * @return the current circuit state
      */
     public State getState(ProviderName provider) {
-        return getStateFor(provider).getState();
+        return circuitFor(provider).state();
     }
 
     /**
-     * Returns the consecutive failure count for the given provider in CLOSED state.
+     * Returns the number of consecutive failures recorded since the circuit last closed.
      *
-     * @param provider the provider to check
-     * @return current failure count
+     * @param provider the provider to inspect
+     * @return the consecutive failure count
      */
     public int getFailureCount(ProviderName provider) {
-        return getStateFor(provider).getFailureCount();
+        return circuitFor(provider).failureCount();
     }
 
     /**
-     * Resets the breaker for the given provider back to CLOSED.
+     * Forces the provider's circuit back to {@link State#CLOSED} and clears its counters.
      *
      * @param provider the provider to reset
      */
     public void reset(ProviderName provider) {
-        getStateFor(provider).reset();
+        circuitFor(provider).reset();
     }
 
-    /**
-     * Resets all provider circuits back to CLOSED.
-     */
+    /** Forces every known provider's circuit back to {@link State#CLOSED}. */
     public void resetAll() {
-        providerStates.values().forEach(ProviderCircuitState::reset);
+        circuits.values().forEach(ProviderCircuit::reset);
     }
 
-    private ProviderCircuitState getStateFor(ProviderName provider) {
+    private ProviderCircuit circuitFor(ProviderName provider) {
         if (provider == null) {
             throw new IllegalArgumentException("Provider must not be null");
         }
-        return providerStates.computeIfAbsent(provider, p -> new ProviderCircuitState(clock.instant()));
+        return circuits.computeIfAbsent(provider, p -> new ProviderCircuit());
     }
 
     /**
-     * Thread-safe state tracker for an individual provider.
+     * State for one provider. Every method is synchronized on the instance, so a check and the
+     * transition it causes (for example, granting the single probe) happen as one step, and
+     * providers never block one another.
      */
-    private class ProviderCircuitState {
+    private final class ProviderCircuit {
         private State state = State.CLOSED;
-        private int consecutiveFailures = 0;
-        private int consecutiveSuccesses = 0;
-        private Instant lastStateChange;
-
-        ProviderCircuitState(Instant initialTime) {
-            this.lastStateChange = initialTime;
-        }
+        private int consecutiveFailures;
+        /** When the circuit last opened; the cooldown is measured from here. */
+        private Instant openedAt;
+        /** When the current probe was granted; used to recover from a probe that never reports. */
+        private Instant probeGrantedAt;
 
         synchronized boolean isOpen() {
-            if (state == State.OPEN) {
-                Instant now = clock.instant();
-                if (!now.isBefore(lastStateChange.plus(waitDurationInOpenState))) {
-                    state = State.HALF_OPEN;
-                    lastStateChange = now;
-                    consecutiveSuccesses = 0;
+            Instant now = clock.instant();
+            switch (state) {
+                case CLOSED:
                     return false;
-                }
-                return true;
+                case OPEN:
+                    if (cooldownElapsed(openedAt, now)) {
+                        state = State.HALF_OPEN;
+                        probeGrantedAt = now;
+                        return false;
+                    }
+                    return true;
+                case HALF_OPEN:
+                    // A probe is in flight. Only if it has gone unanswered for a full cooldown
+                    // is it treated as lost, and this caller becomes the new probe.
+                    if (cooldownElapsed(probeGrantedAt, now)) {
+                        probeGrantedAt = now;
+                        return false;
+                    }
+                    return true;
+                default:
+                    throw new IllegalStateException("Unknown state " + state);
             }
-            return false;
         }
 
         synchronized void recordSuccess() {
             if (state == State.HALF_OPEN) {
-                consecutiveSuccesses++;
-                if (consecutiveSuccesses >= permittedHalfOpenTrials) {
-                    state = State.CLOSED;
-                    consecutiveFailures = 0;
-                    consecutiveSuccesses = 0;
-                    lastStateChange = clock.instant();
-                }
+                // One successful probe is enough to close the circuit (issue #6).
+                close();
             } else if (state == State.CLOSED) {
                 consecutiveFailures = 0;
             }
+            // In OPEN, a late success from a call made before the circuit tripped is ignored.
         }
 
         synchronized void recordFailure() {
-            Instant now = clock.instant();
             if (state == State.HALF_OPEN) {
-                state = State.OPEN;
-                lastStateChange = now;
-                consecutiveSuccesses = 0;
+                open(clock.instant());
             } else if (state == State.CLOSED) {
                 consecutiveFailures++;
                 if (consecutiveFailures >= failureThreshold) {
-                    state = State.OPEN;
-                    lastStateChange = now;
+                    open(clock.instant());
                 }
             }
+            // In OPEN, late failures are ignored so they do not extend the cooldown.
         }
 
-        synchronized State getState() {
-            if (state == State.OPEN) {
-                Instant now = clock.instant();
-                if (!now.isBefore(lastStateChange.plus(waitDurationInOpenState))) {
-                    state = State.HALF_OPEN;
-                    lastStateChange = now;
-                    consecutiveSuccesses = 0;
-                }
-            }
+        synchronized State state() {
             return state;
         }
 
-        synchronized int getFailureCount() {
+        synchronized int failureCount() {
             return consecutiveFailures;
         }
 
         synchronized void reset() {
+            close();
+        }
+
+        private void open(Instant now) {
+            state = State.OPEN;
+            openedAt = now;
+            probeGrantedAt = null;
+        }
+
+        private void close() {
             state = State.CLOSED;
             consecutiveFailures = 0;
-            consecutiveSuccesses = 0;
-            lastStateChange = clock.instant();
+            openedAt = null;
+            probeGrantedAt = null;
+        }
+
+        private boolean cooldownElapsed(Instant since, Instant now) {
+            return !now.isBefore(since.plus(cooldownDuration));
         }
     }
 }

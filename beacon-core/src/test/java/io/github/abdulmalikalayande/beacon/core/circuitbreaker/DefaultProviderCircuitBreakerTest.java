@@ -1,6 +1,7 @@
 package io.github.abdulmalikalayande.beacon.core.circuitbreaker;
 
 import io.github.abdulmalikalayande.beacon.api.enums.ProviderName;
+import io.github.abdulmalikalayande.beacon.core.circuitbreaker.DefaultProviderCircuitBreaker.State;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -10,9 +11,15 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,288 +28,293 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("DefaultProviderCircuitBreaker")
 class DefaultProviderCircuitBreakerTest {
 
+    private static final int FAILURE_THRESHOLD = DefaultProviderCircuitBreaker.DEFAULT_FAILURE_THRESHOLD;
+    private static final Duration COOLDOWN = DefaultProviderCircuitBreaker.DEFAULT_COOLDOWN;
+
     private MutableClock clock;
     private DefaultProviderCircuitBreaker circuitBreaker;
 
-    private static final int DEFAULT_FAILURE_THRESHOLD = 5;
-    private static final Duration DEFAULT_WAIT_DURATION = Duration.ofSeconds(60);
-    private static final int DEFAULT_HALF_OPEN_TRIALS = 3;
-
     @BeforeEach
     void setUp() {
-        clock = new MutableClock(Instant.parse("2026-10-30T10:00:00Z"), ZoneId.of("UTC"));
-        circuitBreaker = new DefaultProviderCircuitBreaker(
-                clock,
-                DEFAULT_FAILURE_THRESHOLD,
-                DEFAULT_WAIT_DURATION,
-                DEFAULT_HALF_OPEN_TRIALS
-        );
+        clock = new MutableClock(Instant.parse("2026-10-30T10:00:00Z"));
+        circuitBreaker = new DefaultProviderCircuitBreaker(clock);
     }
 
     @Nested
-    @DisplayName("Initial State & Normal (Closed) Operation")
+    @DisplayName("Defaults")
+    class DefaultsTests {
+
+        @Test
+        @DisplayName("Defaults follow issue #6: 5 consecutive failures, 30-second cooldown")
+        void defaultsMatchIssue() {
+            assertThat(DefaultProviderCircuitBreaker.DEFAULT_FAILURE_THRESHOLD).isEqualTo(5);
+            assertThat(DefaultProviderCircuitBreaker.DEFAULT_COOLDOWN).isEqualTo(Duration.ofSeconds(30));
+        }
+    }
+
+    @Nested
+    @DisplayName("CLOSED state")
     class ClosedStateTests {
 
         @Test
-        @DisplayName("Newly checked provider starts in CLOSED state and isOpen returns false")
+        @DisplayName("A provider that has never been seen is CLOSED and isOpen returns false")
         void initialState_isClosed() {
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.CLOSED);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.CLOSED);
         }
 
         @Test
-        @DisplayName("Successes in CLOSED state keep the circuit CLOSED")
-        void recordSuccess_remainsClosed() {
-            circuitBreaker.recordSuccess(ProviderName.TWILIO);
-            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.CLOSED);
-        }
-
-        @Test
-        @DisplayName("Failures below threshold keep the circuit CLOSED")
-        void failuresBelowThreshold_remainsClosed() {
-            for (int i = 0; i < DEFAULT_FAILURE_THRESHOLD - 1; i++) {
-                circuitBreaker.recordFailure(ProviderName.TWILIO);
-            }
+        @DisplayName("Failures below the threshold keep the circuit CLOSED")
+        void failuresBelowThreshold_remainClosed() {
+            recordFailures(ProviderName.TWILIO, FAILURE_THRESHOLD - 1);
 
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.CLOSED);
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO))
-                    .isEqualTo(DEFAULT_FAILURE_THRESHOLD - 1);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.CLOSED);
+            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(FAILURE_THRESHOLD - 1);
         }
 
         @Test
-        @DisplayName("A success resets the consecutive failure count in CLOSED state")
+        @DisplayName("A success while CLOSED resets the consecutive failure count")
         void successResetsFailureCount() {
-            circuitBreaker.recordFailure(ProviderName.TWILIO);
-            circuitBreaker.recordFailure(ProviderName.TWILIO);
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(2);
+            recordFailures(ProviderName.TWILIO, FAILURE_THRESHOLD - 1);
 
             circuitBreaker.recordSuccess(ProviderName.TWILIO);
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(0);
+            recordFailures(ProviderName.TWILIO, FAILURE_THRESHOLD - 1);
+
+            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(FAILURE_THRESHOLD - 1);
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
         }
     }
 
     @Nested
-    @DisplayName("Tripping to OPEN State")
-    class TrippingTests {
+    @DisplayName("OPEN state")
+    class OpenStateTests {
 
         @Test
-        @DisplayName("Reaching failure threshold trips circuit to OPEN and isOpen returns true")
-        void reachingThreshold_tripsToOpen() {
-            for (int i = 0; i < DEFAULT_FAILURE_THRESHOLD; i++) {
-                circuitBreaker.recordFailure(ProviderName.TWILIO);
-            }
+        @DisplayName("Reaching the failure threshold opens the circuit")
+        void reachingThreshold_opens() {
+            trip(ProviderName.TWILIO);
 
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.OPEN);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
         }
 
         @Test
-        @DisplayName("Circuit remains OPEN before waitDuration has elapsed")
-        void remainsOpenBeforeWaitDurationExpires() {
-            tripCircuit(ProviderName.TWILIO);
+        @DisplayName("The circuit stays OPEN until the full cooldown has elapsed")
+        void staysOpenDuringCooldown() {
+            trip(ProviderName.TWILIO);
 
-            // Advance clock by 30 seconds (less than 60s wait duration)
-            clock.advance(Duration.ofSeconds(30));
+            clock.advance(COOLDOWN.minusMillis(1));
 
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.OPEN);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+        }
+
+        @Test
+        @DisplayName("Failures recorded while OPEN do not extend the cooldown")
+        void lateFailuresDoNotExtendCooldown() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN.minusSeconds(1));
+            circuitBreaker.recordFailure(ProviderName.TWILIO);
+
+            clock.advance(Duration.ofSeconds(1));
+
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+        }
+
+        @Test
+        @DisplayName("A success recorded while OPEN does not close the circuit")
+        void lateSuccessDoesNotClose() {
+            trip(ProviderName.TWILIO);
+
+            circuitBreaker.recordSuccess(ProviderName.TWILIO);
+
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
         }
     }
 
     @Nested
-    @DisplayName("HALF_OPEN Transition & Probing")
+    @DisplayName("HALF_OPEN state: a single probe")
     class HalfOpenTests {
 
         @Test
-        @DisplayName("When waitDuration expires, isOpen transitions to HALF_OPEN and returns false to allow trial")
-        void waitDurationExpires_transitionsToHalfOpen() {
-            tripCircuit(ProviderName.TWILIO);
+        @DisplayName("After the cooldown, the first caller gets the probe and the circuit becomes HALF_OPEN")
+        void firstCallerAfterCooldown_getsProbe() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
 
-            // Advance clock past the 60s wait duration
-            clock.advance(Duration.ofSeconds(61));
-
-            // isOpen should evaluate the timeout, transition to HALF_OPEN, and return false for the probe
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.HALF_OPEN);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.HALF_OPEN);
         }
 
         @Test
-        @DisplayName("Any failure in HALF_OPEN immediately trips back to OPEN for a new wait cycle")
-        void failureInHalfOpen_tripsBackToOpen() {
-            tripCircuit(ProviderName.TWILIO);
-            clock.advance(Duration.ofSeconds(61));
+        @DisplayName("While the probe is in flight, every other caller still sees the circuit as open")
+        void otherCallersDuringProbe_seeOpen() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
 
-            // Trigger transition to HALF_OPEN
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.HALF_OPEN);
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
+            clock.advance(COOLDOWN.minusMillis(1));
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
+        }
 
-            // Trial probe fails
+        @Test
+        @DisplayName("One successful probe closes the circuit and clears the failure count")
+        void successfulProbe_closes() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+
+            circuitBreaker.recordSuccess(ProviderName.TWILIO);
+
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.CLOSED);
+            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isZero();
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+        }
+
+        @Test
+        @DisplayName("A failed probe reopens the circuit and starts a new full cooldown")
+        void failedProbe_reopensWithNewCooldown() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+
             circuitBreaker.recordFailure(ProviderName.TWILIO);
 
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+            clock.advance(COOLDOWN.minusMillis(1));
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.OPEN);
-
-            // Verify a new wait duration is required
-            clock.advance(Duration.ofSeconds(30));
-            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-
-            clock.advance(Duration.ofSeconds(31));
+            clock.advance(Duration.ofMillis(1));
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.HALF_OPEN);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.HALF_OPEN);
         }
 
         @Test
-        @DisplayName("Successful trial calls in HALF_OPEN close the circuit once permitted threshold is reached")
-        void successfulTrials_closesCircuit() {
-            tripCircuit(ProviderName.TWILIO);
-            clock.advance(Duration.ofSeconds(61));
-
-            // Transition to HALF_OPEN
+        @DisplayName("If the probe never reports back, a new probe is granted after another cooldown")
+        void lostProbe_isReplacedAfterCooldown() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
 
-            // Record required consecutive trial successes (threshold = 3)
-            circuitBreaker.recordSuccess(ProviderName.TWILIO);
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.HALF_OPEN);
+            clock.advance(COOLDOWN);
 
-            circuitBreaker.recordSuccess(ProviderName.TWILIO);
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.HALF_OPEN);
-
-            circuitBreaker.recordSuccess(ProviderName.TWILIO);
-            // Reached 3 successes -> should be CLOSED
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.CLOSED);
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(0);
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
+        }
+
+        @Test
+        @DisplayName("getState is a pure read: it does not move the circuit to HALF_OPEN or use up the probe")
+        void getState_doesNotGrantProbe() {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
+
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
+            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
         }
     }
 
     @Nested
-    @DisplayName("Provider Isolation")
+    @DisplayName("Provider isolation")
     class ProviderIsolationTests {
 
         @Test
-        @DisplayName("Tripping one provider does not affect any other provider")
+        @DisplayName("Opening one provider's circuit does not affect any other provider")
         void trippingOneProvider_doesNotAffectOthers() {
-            tripCircuit(ProviderName.TWILIO);
+            trip(ProviderName.TWILIO);
 
             assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-            assertThat(circuitBreaker.isOpen(ProviderName.TERMII)).isFalse();
-            assertThat(circuitBreaker.isOpen(ProviderName.SENDGRID)).isFalse();
-            assertThat(circuitBreaker.isOpen(ProviderName.FIREBASE)).isFalse();
-            assertThat(circuitBreaker.isOpen(ProviderName.MAILGUN)).isFalse();
-            assertThat(circuitBreaker.isOpen(ProviderName.CUSTOM)).isFalse();
+            for (ProviderName other : ProviderName.values()) {
+                if (other != ProviderName.TWILIO) {
+                    assertThat(circuitBreaker.isOpen(other)).as(other.name()).isFalse();
+                }
+            }
         }
 
         @Test
-        @DisplayName("Each provider maintains its own independent failure counts and state")
+        @DisplayName("Each provider keeps its own failure count")
         void independentFailureCounts() {
-            circuitBreaker.recordFailure(ProviderName.TWILIO);
-            circuitBreaker.recordFailure(ProviderName.TWILIO);
-            circuitBreaker.recordFailure(ProviderName.SENDGRID);
+            recordFailures(ProviderName.TWILIO, 2);
+            recordFailures(ProviderName.SENDGRID, 1);
 
             assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(2);
             assertThat(circuitBreaker.getFailureCount(ProviderName.SENDGRID)).isEqualTo(1);
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TERMII)).isEqualTo(0);
+            assertThat(circuitBreaker.getFailureCount(ProviderName.TERMII)).isZero();
         }
     }
 
     @Nested
-    @DisplayName("Validation & Defensive Guards")
+    @DisplayName("Validation")
     class ValidationTests {
 
         @Test
-        @DisplayName("Null provider passed to isOpen throws IllegalArgumentException")
-        void nullProvider_isOpenThrows() {
+        @DisplayName("A null provider is rejected by every public method")
+        void nullProvider_isRejected() {
             assertThatThrownBy(() -> circuitBreaker.isOpen(null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Provider must not be null");
-        }
-
-        @Test
-        @DisplayName("Null provider passed to recordSuccess throws IllegalArgumentException")
-        void nullProvider_recordSuccessThrows() {
             assertThatThrownBy(() -> circuitBreaker.recordSuccess(null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Provider must not be null");
-        }
-
-        @Test
-        @DisplayName("Null provider passed to recordFailure throws IllegalArgumentException")
-        void nullProvider_recordFailureThrows() {
             assertThatThrownBy(() -> circuitBreaker.recordFailure(null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Provider must not be null");
         }
 
         @Test
-        @DisplayName("Null clock in constructor throws NullPointerException")
-        void nullClock_throwsNPE() {
+        @DisplayName("A null clock is rejected")
+        void nullClock_isRejected() {
             assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(null))
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("Clock must not be null");
         }
 
         @Test
-        @DisplayName("Invalid configuration values in constructor throw IllegalArgumentException")
-        void invalidConfig_throwsIllegalArgumentException() {
-            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 0, DEFAULT_WAIT_DURATION, 1))
+        @DisplayName("A non-positive failure threshold or cooldown is rejected")
+        void invalidConfiguration_isRejected() {
+            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 0, COOLDOWN))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Failure threshold must be positive");
-
-            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, Duration.ZERO, 1))
+            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, Duration.ZERO))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Wait duration must be positive");
-
-            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, Duration.ofSeconds(-10), 1))
+                    .hasMessageContaining("Cooldown duration must be positive");
+            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, Duration.ofSeconds(-10)))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Wait duration must be positive");
-
-            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, DEFAULT_WAIT_DURATION, 0))
+                    .hasMessageContaining("Cooldown duration must be positive");
+            assertThatThrownBy(() -> new DefaultProviderCircuitBreaker(clock, 5, null))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Permitted half-open trials must be positive");
+                    .hasMessageContaining("Cooldown duration must be positive");
         }
     }
 
     @Nested
-    @DisplayName("Manual Reset Operations")
+    @DisplayName("Manual reset")
     class ResetTests {
 
         @Test
-        @DisplayName("reset() resets a specific provider back to CLOSED with 0 failures")
+        @DisplayName("reset() closes one provider's circuit and clears its failure count")
         void resetSpecificProvider() {
-            tripCircuit(ProviderName.TWILIO);
-            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
+            trip(ProviderName.TWILIO);
+            trip(ProviderName.SENDGRID);
 
             circuitBreaker.reset(ProviderName.TWILIO);
 
-            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isFalse();
-            assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                    .isEqualTo(DefaultProviderCircuitBreaker.State.CLOSED);
-            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(0);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.CLOSED);
+            assertThat(circuitBreaker.getFailureCount(ProviderName.TWILIO)).isZero();
+            assertThat(circuitBreaker.isOpen(ProviderName.SENDGRID)).isTrue();
         }
 
         @Test
-        @DisplayName("resetAll() resets all registered providers")
+        @DisplayName("resetAll() closes every provider's circuit")
         void resetAllProviders() {
-            tripCircuit(ProviderName.TWILIO);
-            tripCircuit(ProviderName.SENDGRID);
-
-            assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-            assertThat(circuitBreaker.isOpen(ProviderName.SENDGRID)).isTrue();
+            trip(ProviderName.TWILIO);
+            trip(ProviderName.SENDGRID);
 
             circuitBreaker.resetAll();
 
@@ -312,85 +324,147 @@ class DefaultProviderCircuitBreakerTest {
     }
 
     @Nested
-    @DisplayName("Concurrency & Thread Safety")
+    @DisplayName("Concurrency")
     class ConcurrencyTests {
 
+        private static final int THREADS = 20;
+        private static final int CALLS_PER_THREAD = 50;
+
         @Test
-        @DisplayName("Concurrent failure recordings from multiple threads trip the breaker correctly without corruption")
-        void concurrentFailures_tripsCorrectly() throws InterruptedException {
-            int threadCount = 20;
-            ExecutorService executor = Executors.newFixedThreadPool(threadCount);
-            try {
-                CountDownLatch readyLatch = new CountDownLatch(threadCount);
-                CountDownLatch startLatch = new CountDownLatch(1);
-                CountDownLatch doneLatch = new CountDownLatch(threadCount);
+        @DisplayName("Concurrent failures below the threshold are all counted: no update is lost and the circuit stays CLOSED")
+        void concurrentFailuresBelowThreshold_areCountedExactly() throws Exception {
+            int total = THREADS * CALLS_PER_THREAD;
+            var breaker = new DefaultProviderCircuitBreaker(clock, total + 1, COOLDOWN);
 
-                for (int i = 0; i < threadCount; i++) {
-                    executor.submit(() -> {
-                        readyLatch.countDown();
-                        try {
-                            startLatch.await();
-                            circuitBreaker.recordFailure(ProviderName.TWILIO);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        } finally {
-                            doneLatch.countDown();
-                        }
-                    });
+            runConcurrently(THREADS, () -> {
+                for (int i = 0; i < CALLS_PER_THREAD; i++) {
+                    breaker.recordFailure(ProviderName.TWILIO);
                 }
+                return null;
+            });
 
-                readyLatch.await();
-                startLatch.countDown();
-                doneLatch.await();
+            assertThat(breaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(total);
+            assertThat(breaker.getState(ProviderName.TWILIO)).isEqualTo(State.CLOSED);
+        }
 
-                assertThat(circuitBreaker.isOpen(ProviderName.TWILIO)).isTrue();
-                assertThat(circuitBreaker.getState(ProviderName.TWILIO))
-                        .isEqualTo(DefaultProviderCircuitBreaker.State.OPEN);
+        @Test
+        @DisplayName("Concurrent failures that reach the threshold exactly open the circuit with the exact count")
+        void concurrentFailuresReachingThreshold_openWithExactCount() throws Exception {
+            int total = THREADS * CALLS_PER_THREAD;
+            var breaker = new DefaultProviderCircuitBreaker(clock, total, COOLDOWN);
+
+            runConcurrently(THREADS, () -> {
+                for (int i = 0; i < CALLS_PER_THREAD; i++) {
+                    breaker.recordFailure(ProviderName.TWILIO);
+                }
+                return null;
+            });
+
+            assertThat(breaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(total);
+            assertThat(breaker.getState(ProviderName.TWILIO)).isEqualTo(State.OPEN);
+        }
+
+        @Test
+        @DisplayName("Concurrent failures on different providers are counted per provider without interference")
+        void concurrentFailuresOnDifferentProviders_areIsolated() throws Exception {
+            var breaker = new DefaultProviderCircuitBreaker(clock, Integer.MAX_VALUE, COOLDOWN);
+            ProviderName[] providers = {ProviderName.TWILIO, ProviderName.SENDGRID};
+
+            AtomicInteger next = new AtomicInteger();
+            runConcurrently(THREADS, () -> {
+                ProviderName provider = providers[next.getAndIncrement() % providers.length];
+                for (int i = 0; i < CALLS_PER_THREAD; i++) {
+                    breaker.recordFailure(provider);
+                }
+                return null;
+            });
+
+            int perProvider = (THREADS / providers.length) * CALLS_PER_THREAD;
+            assertThat(breaker.getFailureCount(ProviderName.TWILIO)).isEqualTo(perProvider);
+            assertThat(breaker.getFailureCount(ProviderName.SENDGRID)).isEqualTo(perProvider);
+            assertThat(breaker.getFailureCount(ProviderName.TERMII)).isZero();
+        }
+
+        @Test
+        @DisplayName("When many callers race after the cooldown, exactly one is granted the probe")
+        void concurrentCallersAfterCooldown_exactlyOneProbe() throws Exception {
+            trip(ProviderName.TWILIO);
+            clock.advance(COOLDOWN);
+
+            List<Boolean> results = runConcurrently(THREADS, () -> circuitBreaker.isOpen(ProviderName.TWILIO));
+
+            assertThat(results).filteredOn(open -> !open).hasSize(1);
+            assertThat(results).filteredOn(open -> open).hasSize(THREADS - 1);
+            assertThat(circuitBreaker.getState(ProviderName.TWILIO)).isEqualTo(State.HALF_OPEN);
+        }
+
+        /**
+         * Starts {@code threads} tasks at the same moment and returns each task's result.
+         */
+        private <T> List<T> runConcurrently(int threads, Callable<T> task) throws Exception {
+            ExecutorService executor = Executors.newFixedThreadPool(threads);
+            try {
+                CountDownLatch ready = new CountDownLatch(threads);
+                CountDownLatch start = new CountDownLatch(1);
+                List<Future<T>> futures = new ArrayList<>();
+                for (int i = 0; i < threads; i++) {
+                    futures.add(executor.submit(() -> {
+                        ready.countDown();
+                        start.await();
+                        return task.call();
+                    }));
+                }
+                assertThat(ready.await(10, TimeUnit.SECONDS)).as("workers ready").isTrue();
+                start.countDown();
+                List<T> results = new ArrayList<>();
+                for (Future<T> future : futures) {
+                    results.add(future.get(10, TimeUnit.SECONDS));
+                }
+                return results;
             } finally {
-                executor.shutdown();
+                executor.shutdownNow();
             }
         }
     }
 
-    private void tripCircuit(ProviderName provider) {
-        for (int i = 0; i < DEFAULT_FAILURE_THRESHOLD; i++) {
+    private void trip(ProviderName provider) {
+        recordFailures(provider, FAILURE_THRESHOLD);
+    }
+
+    private void recordFailures(ProviderName provider, int count) {
+        for (int i = 0; i < count; i++) {
             circuitBreaker.recordFailure(provider);
         }
     }
 
     /**
-     * Mutable Clock fixture for deterministic time manipulation in tests.
+     * A clock whose time only moves when a test advances it. The instant is volatile so
+     * worker threads in the concurrency tests see the value the test thread set.
      */
-    static class MutableClock extends Clock {
-        private Instant currentInstant;
-        private final ZoneId zone;
+    static final class MutableClock extends Clock {
+        private volatile Instant now;
 
-        MutableClock(Instant initialInstant, ZoneId zone) {
-            this.currentInstant = initialInstant;
-            this.zone = zone;
+        MutableClock(Instant start) {
+            this.now = start;
         }
 
-        public void advance(Duration duration) {
-            this.currentInstant = this.currentInstant.plus(duration);
-        }
-
-        public void setInstant(Instant instant) {
-            this.currentInstant = instant;
+        void advance(Duration duration) {
+            now = now.plus(duration);
         }
 
         @Override
         public ZoneId getZone() {
-            return zone;
+            return ZoneOffset.UTC;
         }
 
         @Override
         public Clock withZone(ZoneId zone) {
-            return new MutableClock(currentInstant, zone);
+            throw new UnsupportedOperationException("Not needed by these tests");
         }
 
         @Override
         public Instant instant() {
-            return currentInstant;
+            return now;
         }
     }
 }
