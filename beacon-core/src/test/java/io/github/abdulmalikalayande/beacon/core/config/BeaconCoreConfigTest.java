@@ -1,6 +1,8 @@
 package io.github.abdulmalikalayande.beacon.core.config;
 
 
+import io.github.abdulmalikalayande.beacon.api.port.ProviderCircuitBreaker;
+import io.github.abdulmalikalayande.beacon.core.resilience.DefaultProviderCircuitBreaker;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -123,4 +125,30 @@ class BeaconCoreConfigTest {
             });
     }
 
+    /**
+     * Verifies that the default {@link ProviderCircuitBreaker} bean is present in the application context
+     * when no custom bean is defined.
+     */
+    @Test
+    public void contextLoads_DefaultProviderCircuitBreakerIsPresent() {
+        contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(ProviderCircuitBreaker.class);
+            ProviderCircuitBreaker cb = context.getBean(ProviderCircuitBreaker.class);
+            assertThat(cb).isNotNull();
+            assertThat(cb).isInstanceOf(DefaultProviderCircuitBreaker.class);
+            assertThat(context).getBean("providerCircuitBreaker").isSameAs(cb);
+        });
+    }
+
+    /**
+     * Verifies that the default {@link ProviderCircuitBreaker} bean is a singleton within the application context.
+     */
+    @Test
+    public void contextLoads_DefaultProviderCircuitBreakerIsSingleton() {
+        contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(ProviderCircuitBreaker.class);
+            assertThat(context.getBean(ProviderCircuitBreaker.class))
+                    .isSameAs(context.getBean(ProviderCircuitBreaker.class));
+        });
+    }
 }

@@ -389,7 +389,12 @@
 - **Status:** Planned. A token bucket per provider, in process by default, distributed (Redis) optionally.
 
 ### D-103 A circuit breaker per provider, with fallback
-- **Status:** Planned.
+- **Status:** Accepted, partly in code. The breaker is built (`DefaultProviderCircuitBreaker`, #21, from issue #6). Failing over to the fallback provider when a circuit is open is not built yet; it belongs to the provider registry (D-100) and the worker.
+- **Decision:** Each `ProviderName` has its own circuit: CLOSED, OPEN, HALF_OPEN. Five consecutive failures open it. After a 30-second cooldown, the first `isOpen()` call returns `false` and becomes the single probe; every other caller still sees the circuit as open. One successful probe closes the circuit; a failed probe reopens it with a new cooldown. The defaults come from issue #6, and both values are constructor parameters. The class lives in `core.resilience`, the package the rate limiter (D-102) will share.
+- **Lost probe (decided 2026-11-02):** if the probe never reports back (for example, its worker crashed), a new probe is granted once another cooldown has passed since the first was granted.
+- **Why:** A breaker exists so workers stop waiting on a provider that is down. Letting only one probe through tests recovery without sending every queued task to a provider that may still be failing. The lost-probe rule is there because, without it, one crashed worker would leave the circuit half-open, and the provider unusable, for good.
+- **Also decided:** results recorded while OPEN come from calls started before the trip and are ignored, so a late success does not close the circuit and a late failure does not extend the cooldown. `getState()` is a pure read and never grants the probe. The breaker does not see HTTP status codes; the caller must not record a 429 as a failure (D-101).
+- **Rejected:** Letting every caller through once the cooldown ends (the first version in #17), which sends the full load to a provider that may still be down. Requiring three successful probes to close, which has no meaning when only one probe is in flight.
 
 ### D-104 The suppression check comes before sending
 - **Status:** Planned. Hard bounces, spam complaints, unsubscribes and admin suppressions block delivery; the task is marked `SUPPRESSED`. This is a legal and sender-reputation requirement.
