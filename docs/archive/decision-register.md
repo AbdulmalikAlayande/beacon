@@ -185,18 +185,19 @@
 ## 5. Ingestion (item 5)
 
 ### D-050 `send()` publishes an event; the real write happens after the host commits
-- **Status:** Accepted, in code.
+- **Status:** Superseded by D-065 (decided 2026-11-02). **Still what the code does** until D-065 is built.
 - **Decision:** `send()` publishes `NotificationRequestedEvent`. `NotificationRequestedEventListener` handles it with `@TransactionalEventListener(phase = AFTER_COMMIT)` and `@Transactional(propagation = REQUIRES_NEW)`.
 - **Why:** If the host's transaction rolls back (a payment fails), no notification may exist for it. Writing directly in `send()` would leave a receipt for a payment that never happened.
 - **Why `REQUIRES_NEW`:** In the after-commit phase the host's finished transaction is still attached to the thread. A plain `@Transactional` would join it and its writes would never be saved.
-- **Limit of the guarantee:** Because the queue rows are written after the host commits, a failure in the listener loses the notification while its idempotency key stays claimed (G-17). Until O-13 is decided, the documents state that "no missed sends" starts once the queue rows are committed.
+- **Limit of the guarantee:** Because the queue rows are written after the host commits, a failure in the listener loses the notification while its idempotency key stays claimed (G-17). Until D-065 is built, the documents state that "no missed sends" starts once the queue rows are committed.
+- **Why it was superseded:** It cannot close G-17. See D-065.
 
 ### D-051 `send()` also works outside a transaction
-- **Status:** Accepted, in code (`fallbackExecution = true`).
+- **Status:** Superseded by D-065 (decided 2026-11-02). **Still what the code does** (`fallbackExecution = true`) until D-065 is built. Under D-065, a `send()` outside a transaction simply commits its request row on its own.
 - **Why:** Without it, `@TransactionalEventListener` silently drops the event when no transaction is active, and the host gets a success response for a notification that never exists. The `NotificationService` Javadoc promises immediate dispatch in this case.
 
 ### D-052 The event is a plain record with its own fields
-- **Status:** Accepted, in code (`core/event/NotificationRequestedEvent`).
+- **Status:** Superseded by D-065 (decided 2026-11-02): there is no event under D-065. **Still in the code** (`core/event/NotificationRequestedEvent`) until D-065 is built.
 - **Decision:** A `record` in `beacon-core`, not extending `ApplicationEvent`, carrying its own copy of the fields (notificationId, idempotencyKey, userId, scheduledAt, type, priority, preferredChannels, context), built with `NotificationRequestedEvent.from(notificationId, request)`.
 - **Why:** Modern Spring publishes any object. The event is internal, so it stays out of `beacon-api`. Its own fields let the internal contract change without touching the public request.
 - **Rejected:** Extending `ApplicationEvent`; an empty `BeaconEvent` base class (records cannot extend classes, and the base held nothing); wrapping the raw `NotificationRequest`; the name `NotificationAcceptedEvent` (considered, not adopted).
@@ -205,6 +206,7 @@
 - **Status:** Accepted, in code.
 - **Decision:** Validate, then claim the idempotency key (`markSeen`), then derive the notification ID, then publish the event, then return `NotificationResponse` with status `CREATED`.
 - **Why:** No work happens for an invalid or duplicate request. The response is an acknowledgement ("accepted"), not "queued", because the rows are only written after commit.
+- **Amended by D-065 (2026-11-02, not built yet):** the "publish the event" step becomes "insert one request row in the host's transaction". Validation and the key claim come first, unchanged. The response stays an acknowledgement, because channel tasks are only created when the request is expanded.
 
 ### D-054 The notification ID is derived from the idempotency key
 - **Status:** Accepted, in code (`uuidFrom(idempotencyKey)`: SHA-256 of the key, shaped into a version-4-style UUID).
@@ -214,6 +216,7 @@
 ### D-055 A duplicate key throws
 - **Status:** Accepted, in code. A repeated idempotency key throws `DuplicateNotificationException`.
 - **Rejected:** Silently returning the original response.
+- **Why:** A repeated key usually means an upstream retry or a bug in the host, and a silent no-op would hide it. A host that treats a duplicate as success can catch `DuplicateNotificationException` and move on.
 
 ### D-056 Channel resolution
 - **Status:** Accepted, in code.
@@ -223,11 +226,13 @@
 
 ### D-057 An unknown user is skipped quietly
 - **Status:** Accepted, in code. If `UserPreferenceResolver.resolve()` returns `null`, the listener logs a warning and queues nothing.
+- **Under D-065:** what happens to a request whose user is unknown at expansion time is open again (O-20).
 
 ### D-058 The listener writes the status record, not the queue
 - **Status:** Accepted, in code.
 - **Decision:** For each task, the listener calls `notificationQueue.enqueue(task)` and then saves a `QUEUED` row to `notification_status`.
 - **Why:** The status table is the audit trail, not part of the queue. If a Kafka queue replaced the database queue, a status write inside `enqueue` would vanish with it.
+- **Under D-065:** the expand step, not the listener, enqueues each task and writes its status row. The rule itself (the status write is not part of `enqueue`) is unchanged.
 
 ### D-059 A missing priority comes from the type registry
 - **Status:** Accepted, in code (`NotificationRequestedEventListener.resolvePriority`, tested by `missingPriority_isResolvedFromTypeRegistry`). Confirmed 2026-11-02.
@@ -237,6 +242,7 @@
 ### D-060 When a task becomes available
 - **Status:** Accepted, in code (listener `createDeliveryTask`).
 - **Decision:** Start from `scheduledAt` if the host gave one, otherwise the Clock's now. Then apply quiet hours (D-061). The result is the task's `availableAt`.
+- **Under D-065:** "the Clock's now" becomes the request row's `requestedAt` (the Clock's time inside `send()`), never the time of expansion.
 
 ### D-061 Quiet hours
 - **Status:** Accepted, in code (`core/listener/QuietHoursPolicy`, tested by `QuietHoursPolicyTest` and `NotificationIngestionTransactionalTest`). The listener creates the policy itself with `new` rather than receiving it as a dependency.
@@ -270,6 +276,25 @@
 - **Why:** Contexts carry OTPs and personal data; they must never sit in plain text in the queue or a broker. GCM also detects tampering.
 - **Open:** How the host supplies and rotates the key (see O-06, which records the current proposal).
 - **Known issues:** Jackson exceptions are not converted to `NotificationException`, and no additional authenticated data ties a ciphertext to its row (G-32).
+- **Under D-065:** the context is encrypted in `send()` and stored encrypted in the request row; the expand step copies the ciphertext into each channel task.
+
+### D-065 `send()` writes a request row in the host's transaction (transactional outbox)
+- **Status:** Accepted, not yet in code. Decided 2026-11-02 (was O-13). Supersedes D-050, D-051 and D-052; amends D-053, D-058, D-060 and D-064. Built as part of item 6.
+- **Decision:**
+  - `send()` validates, claims the idempotency key (unchanged), then inserts one request row in the host's transaction and returns. There is no event and no after-commit listener. The exact order is: validate, claim the key, derive the notification ID, insert the request row, return. Without a transaction, the insert simply commits on its own. The request row commits if and only if the host's work commits.
+  - The request row stores: notification ID, idempotency key, user ID, type, priority as sent (may be null), preferred channels, encrypted context, `scheduledAt`, and `requestedAt` (the Clock's time inside `send()`).
+  - Quiet hours and `availableAt` are measured from `scheduledAt` if given, otherwise from `requestedAt`, never from the time of expansion.
+  - A new migration adds the request table. Proposed name: `notification_request`.
+  - The queue poller gets an expand step. It claims request rows with `FOR UPDATE SKIP LOCKED` in a short transaction. Then, in one transaction that also marks the request expanded, it does what the listener does today: resolve the user, resolve channels and priority, apply quiet hours, and fan out into channel tasks and status rows. A failure in that step is retried, not lost.
+  - Each poller tick runs, in this order: recover stuck rows, expand request rows, then claim tasks. Each step is its own short transaction. Reason: a request expanded in a tick can be claimed in the same tick, so an OTP is not delayed by an extra poll interval. A busy tick spends time expanding before it delivers anything; that is acceptable at Beacon's scale, and the batch sizes in O-02 cover it.
+- **Why:** "No missed sends" is the promise Beacon exists to keep. Writing the request in the host's transaction means nothing can be lost between the host's commit and Beacon's write (G-17). Beacon cannot break the host's transaction, because the only work inside it is one insert. A failing user lookup is retried instead of losing the notification. Changing the design now, while item 6 is still being designed, costs far less than after the worker and providers are built on the current design.
+- **Consequence:** Beacon's tables must share the host's database and transaction. This resolves O-16: no separate datasource.
+- **Unchanged:** D-072. The in-memory and Redis dedup stores still keep a key claimed after a host rollback; only the JDBC store's claim rolls back with the host.
+- **Rejected:**
+  - **Keeping the after-commit listener (option A).** A listener failure after the host commits loses the notification while its key stays claimed (G-17).
+  - **Running the listener before commit, inside the host's transaction (option B1).** Any failure in Beacon at that point, including a failure in the host's own `UserPreferenceResolver`, would roll back the host's business transaction because of a notification.
+- **Open:** retry and backoff for a failing resolver in the expand step (O-19); what happens to a request whose user is unknown (O-20); whether expanded request rows are deleted or kept (O-21).
+- **Effect on tests:** most of `NotificationIngestionTransactionalTest` checks queue and status rows straight after commit; under D-065 those rows exist only after expansion, so those tests must run the expand step first or check the request table. `listenerWaitsForCommit_notForPublish` and `noTransaction_tasksAreQueuedImmediately` are tied to the listener and will be rewritten. This rework is part of item 6.
 
 ---
 
@@ -324,7 +349,7 @@
 
 ### D-090 `DeliveryTask` and `DeliveryTaskEntity` are separate, converted in one place
 - **Status:** Accepted, in code.
-- **Decision:** `DeliveryTask` (record in `beacon-api/dto`) is what the library passes around and what every queue implementation accepts. `DeliveryTaskEntity` (`beacon-core/entity`) is a row of `notification_queue`. Only `DatabaseNotificationQueue` converts between them. The listener builds `DeliveryTask`s and never touches the entity or its repository.
+- **Decision:** `DeliveryTask` (record in `beacon-api/dto`) is what the library passes around and what every queue implementation accepts. `DeliveryTaskEntity` (`beacon-core/entity`) is a row of `notification_queue`. Only `DatabaseNotificationQueue` converts between them. The listener builds `DeliveryTask`s and never touches the entity or its repository. Under D-065, the expand step takes the listener's place and follows the same rule.
 - **Why:** A Kafka message has no table row, so the shared contract cannot be a JPA entity.
 
 ### D-091 What `DeliveryTask` carries
@@ -356,6 +381,7 @@
 ### D-096 The poller never dies
 - **Status:** Accepted, not yet in code.
 - **Decision:** `OutboxPoller.tick()` recovers stuck rows, claims a batch and hands each task to the handler. One task failing does not stop the others, and no exception escapes `tick()`. The poller can be stopped, and stops claiming once stopped.
+- **Tick order (2026-11-02, with D-065):** recover stuck rows, expand request rows, then claim tasks, each step in its own short transaction, so a request expanded in a tick can be claimed in the same tick. The handler interface stays unnamed until it is built; documents call it "the delivery handler".
 - **Why:** In Java, an exception that escapes a scheduled task cancels that schedule silently and permanently.
 - **Naming (2026-11-02):** Documents call this component the "queue poller" in prose. The class name is decided when it is built; `OutboxPoller` is only the name used by the test scaffold. The "outbox" wording in V1's comment and in test class names contradicts D-032's naming (G-34).
 
@@ -384,6 +410,7 @@
 
 ### D-101 Error classification
 - **Status:** Planned. 429 and 503 are temporary (retry); 400 is permanent (no retry). **A 429 must never trip the circuit breaker:** it means Beacon is sending too fast, not that the provider is down, and failing over would only burn the secondary provider's limits as well.
+- **Rejected (recorded 2026-11-02):** treating a 429 as a provider failure, that is, tripping the breaker and failing over. A 429 means Beacon is sending too fast, and failing over would burn the secondary provider's limits too.
 
 ### D-102 Outbound rate limiting per provider
 - **Status:** Planned. A token bucket per provider, in process by default, distributed (Redis) optionally.
@@ -406,6 +433,7 @@
 ### D-107 Webhooks
 - **Status:** Planned. Provider callbacks are verified with HMAC signatures (the real security control). The starter's `NotificationWebhookSecurityConfigurer` lets those paths through the host's Spring Security. Bounces and spam complaints add the contact to the suppression list automatically.
 - **Path (Planned, 2026-11-02):** webhook endpoints live under `/notifications/webhooks/**`, as the README already states.
+- **Rejected (recorded 2026-11-02):** relying on Spring Security alone for webhook paths. A provider cannot present the host's login, so the paths must be let through, and the HMAC signature replaces Spring Security as the control.
 
 ### D-108 No personal data in logs or failure reasons
 - **Status:** Planned, to be proven by tests that check stored reasons and captured logs.
@@ -504,6 +532,7 @@
 | Thymeleaf; a lexer, parser and syntax-tree template engine | D-080 | Too heavy for a library, more than needed |
 | Redis `SETNX` per-notification lock as the worker's main guard | D-073 (open) | `SKIP LOCKED` and `PROCESSING` already guarantee one worker |
 | `NotificationWebhookSecurityConfigurer` in `beacon-api` | D-015 | Spring Security dependency |
+| `send()` publishes an event; an after-commit listener writes the queue rows (D-050, D-051, D-052) | D-065 | A listener failure after commit loses the notification (G-17). Still in the code until D-065 is built |
 
 ---
 
@@ -532,7 +561,7 @@ Every gap below is a code finding for Abdulmalik to fix, except G-14, which is a
 
 ### 13.2 Gaps added on 2026-11-02: production code and schema
 
-- **G-17** A notification can be lost at ingestion while its key stays claimed. `send()` claims the idempotency key before the listener runs. If the after-commit listener throws (for example, the database is unavailable), nothing is queued and a retry with the same key is rejected as a duplicate; with the JDBC store the claim has already committed with the host's transaction. Without a transaction the listener runs inline, so its exception reaches the caller and the key stays claimed. See D-050 and O-13.
+- **G-17** A notification can be lost at ingestion while its key stays claimed. `send()` claims the idempotency key before the listener runs. If the after-commit listener throws (for example, the database is unavailable), nothing is queued and a retry with the same key is rejected as a duplicate; with the JDBC store the claim has already committed with the host's transaction. Without a transaction the listener runs inline, so its exception reaches the caller and the key stays claimed. See D-050. Closed when D-065 is built (item 6).
 - **G-18** Nothing in `src/main` registers the service, the listener, a dedup store, the encryptor, the type registry or a template engine as beans. Beacon cannot yet run inside a host application. See D-016.
 - **G-19** `beacon-api` and `beacon-spring-boot-starter` use groupId `io.github.abdulmalikalayande.beacon`; the decision is `io.github.abdulmalikalayande` for every module. Breaks D-017.
 - **G-20** `DeliveryTaskEntity` does not implement `Persistable` and has no `@Version`, so `deliveryTaskRepository.save()` in `DatabaseNotificationQueue.enqueue` calls `merge()` and runs a select before every insert. See D-038.
@@ -587,6 +616,8 @@ Every gap below is a code finding for Abdulmalik to fix, except G-14, which is a
 - **O-10** What happens to `BeaconCoreApplication` and the other Initializr classes (G-12). **Resolved:** D-018.
 - **O-11** Where the web dependency belongs (G-11). **Resolved:** D-019.
 - **O-12** `AdvancedTemplateEngine`: delete, or plan it. **Resolved:** delete (D-080).
+- **O-13** Should the queue rows be written inside the host's transaction (a true transactional outbox) instead of in the after-commit listener? **Resolved:** yes, as a request row written by `send()` and expanded later (D-065).
+- **O-16** A separate datasource for Beacon's tables, or always the host's datasource? **Resolved:** always the host's datasource; D-065 requires Beacon's tables to share the host's database and transaction.
 
 ### 14.2 Still open
 
@@ -595,9 +626,12 @@ Every gap below is a code finding for Abdulmalik to fix, except G-14, which is a
 - **O-06** Encryption key: property name, required or optional, what happens when it's missing, and rotation (D-064). **Current proposal:** one required property holding a Base64-encoded 32-byte key; startup fails when it is missing. Property name not chosen. Rotation stays open.
 - **O-07** Retention for `deduplication_store` (D-039).
 - **O-08** The delivery lock methods (D-073). Open until item 8.
-- **O-13** Should the queue rows be written inside the host's transaction (a true transactional outbox) instead of in the after-commit listener? Until this is decided, the documents state that "no missed sends" starts once the queue rows are committed (G-17, D-050).
 - **O-14** Should a task held by quiet hours or `scheduledAt` show `DELAYED`, and should `CREATED` ever be written? Today `QUEUED` is the only status written, and `CREATED` appears only in the `send()` response (G-35).
 - **O-15** Cross-channel fallback: when every provider for a channel fails, should Beacon try another channel the user has enabled, as the old spec describes?
-- **O-16** A separate datasource for Beacon's tables (the README's `beacon.datasource.*`), or always the host's datasource?
 - **O-17** Should explicit `preferredChannels` be limited to the type's supported channels (for example, no OTP by EMAIL)? See D-056 and G-28.
 - **O-18** Which licence does Beacon use? The `LICENSE` file is GPL-3.0; the old README said Apache License 2.0 (G-51).
+- **O-19** In the expand step (D-065), how are failures retried, for example when the host's `UserPreferenceResolver` keeps failing: how often, with what backoff, and up to what limit?
+- **O-20** Under D-065, what happens to a request whose user is unknown when it is expanded? (Today's listener skips it quietly, D-057.)
+- **O-21** Under D-065, are request rows deleted once expanded, or kept?
+- **O-22** How does a batch request (D-110) fit the request-row design of D-065?
+- **O-23** What are the retry limit and the backoff numbers for temporary delivery failures (D-105)?
