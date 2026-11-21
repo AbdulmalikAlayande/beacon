@@ -204,7 +204,17 @@ class RedisDeduplicationStoreUnitTest {
 		}
 
 		@Test
-		@DisplayName("12. legacy int seconds constructor delegates correctly")
+		@DisplayName("12. constructor rejects non-positive or sub-millisecond TTL")
+		void constructor_rejectsNonPositiveTtl() {
+			assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicationStore(redisTemplate, fixedClock, Duration.ZERO));
+			assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicationStore(redisTemplate, fixedClock, Duration.ofSeconds(-1)));
+			assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicationStore(redisTemplate, fixedClock, Duration.ofNanos(500)));
+			assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicationStore(redisTemplate, fixedClock, 0));
+			assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicationStore(redisTemplate, fixedClock, -5));
+		}
+
+		@Test
+		@DisplayName("13. legacy int seconds constructor delegates correctly")
 		void legacyConstructor_delegatesCorrectly() {
 			RedisDeduplicationStore legacyStore = new RedisDeduplicationStore(redisTemplate, fixedClock, 3600);
 			String key = "legacy-key";
@@ -246,33 +256,37 @@ class RedisDeduplicationStoreUnitTest {
 					.thenAnswer(invocation -> claimed.compareAndSet(false, true));
 
 			ExecutorService executor = Executors.newFixedThreadPool(threads);
-			CountDownLatch startLatch = new CountDownLatch(1);
-			CountDownLatch doneLatch = new CountDownLatch(threads);
+			try {
+				CountDownLatch startLatch = new CountDownLatch(1);
+				CountDownLatch doneLatch = new CountDownLatch(threads);
 
-			AtomicInteger successCount = new AtomicInteger();
-			AtomicInteger duplicateCount = new AtomicInteger();
+				AtomicInteger successCount = new AtomicInteger();
+				AtomicInteger duplicateCount = new AtomicInteger();
 
-			for (int i = 0; i < threads; i++) {
-				executor.submit(() -> {
-					try {
-						startLatch.await();
-						store.markSeen(key);
-						successCount.incrementAndGet();
-					} catch (DuplicateNotificationException e) {
-						duplicateCount.incrementAndGet();
-					} catch (Exception ignored) {
-					} finally {
-						doneLatch.countDown();
-					}
-				});
+				for (int i = 0; i < threads; i++) {
+					executor.submit(() -> {
+						try {
+							startLatch.await();
+							store.markSeen(key);
+							successCount.incrementAndGet();
+						} catch (DuplicateNotificationException e) {
+							duplicateCount.incrementAndGet();
+						} catch (Exception ignored) {
+						} finally {
+							doneLatch.countDown();
+						}
+					});
+				}
+
+				startLatch.countDown();
+				boolean completed = doneLatch.await(5, TimeUnit.SECONDS);
+				assertTrue(completed, "Workers did not finish in time");
+
+				assertEquals(1, successCount.get(), "Exactly one caller must win the claim");
+				assertEquals(threads - 1, duplicateCount.get(), "All others must receive DuplicateNotificationException");
+			} finally {
+				executor.shutdownNow();
 			}
-
-			startLatch.countDown();
-			assertTrue(doneLatch.await(5, TimeUnit.SECONDS));
-			executor.shutdown();
-
-			assertEquals(1, successCount.get(), "Exactly one caller must win the claim");
-			assertEquals(threads - 1, duplicateCount.get(), "All others must receive DuplicateNotificationException");
 		}
 	}
 }

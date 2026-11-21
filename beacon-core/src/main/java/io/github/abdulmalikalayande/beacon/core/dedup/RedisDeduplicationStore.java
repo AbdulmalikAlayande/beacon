@@ -43,6 +43,9 @@ public class RedisDeduplicationStore implements DeduplicationStore {
 		this.redisTemplate = Objects.requireNonNull(redisTemplate, "redisTemplate must not be null");
 		this.clock = Objects.requireNonNull(clock, "clock must not be null");
 		this.ttl = Objects.requireNonNull(ttl, "ttl must not be null");
+		if (ttl.toMillis() < 1) {
+			throw new IllegalArgumentException("ttl must provide a positive expiration of at least 1 millisecond, was: " + ttl);
+		}
 		this.keyPrefix = StringUtils.isNotBlank(keyPrefix) ? keyPrefix : DEFAULT_KEY_PREFIX;
 	}
 
