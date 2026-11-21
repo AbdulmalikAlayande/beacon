@@ -5,10 +5,12 @@ import io.github.abdulmalikalayande.beacon.api.enums.NotificationStatus;
 import io.github.abdulmalikalayande.beacon.api.port.NotificationQueue;
 import io.github.abdulmalikalayande.beacon.core.entity.DeliveryTaskEntity;
 import io.github.abdulmalikalayande.beacon.core.repository.DeliveryTaskRepository;
+import jakarta.validation.ConstraintViolationException;
 import org.jspecify.annotations.NonNull;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Collections;
 
 /**
  *
@@ -25,6 +27,10 @@ public class DatabaseNotificationQueue implements NotificationQueue {
 	
 	@Override
 	public void enqueue(@NonNull DeliveryTask task) {
+		// Upstream Gap G-43: DatabaseNotificationQueueTest expects ConstraintViolationException when task is null
+		if (task == null) {
+			throw new ConstraintViolationException("must not be null", Collections.emptySet());
+		}
 		DeliveryTaskEntity entity = new DeliveryTaskEntity();
 		entity.setId(task.taskId());
 		entity.setType(task.type());

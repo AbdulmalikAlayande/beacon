@@ -210,7 +210,9 @@ public class TransactionalOutboxRepositoryTest {
 	private static @NonNull NotificationStatusEntity createNotificationStatusEntity(UUID taskId) {
 		NotificationStatusEntity notificationStatusEntity = new NotificationStatusEntity();
 		
-		notificationStatusEntity.setId(taskId);
+		// Upstream Decision D-038: NotificationStatusEntity uses @GeneratedValue(strategy = GenerationType.UUID).
+		// Setting id manually causes Hibernate to treat the entity as detached, triggering an UPDATE rather than
+		// an INSERT, resulting in ObjectOptimisticLockingFailure. Leave id unassigned so Hibernate generates it.
 		notificationStatusEntity.setNotificationId(UUID.randomUUID());
 		notificationStatusEntity.setIdempotencyKey("payment-receipt-999");
 		notificationStatusEntity.setUserId("user-123");
